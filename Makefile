@@ -9,7 +9,7 @@ OBJECT = mongosync
 SRC_DIR = ./
 OUTPUT = ./output
 
-LIB_PATH = -L/home/wxf/workplace/mongo-cxx-driver/build/install/lib/ \
+LIB_PATH = -L/home/wuxiaofei-xy/workplace/mongo-cxx-driver/build/install/lib/ \
 					 -L/usr/local/lib/
 
 LIBS = -lmongoclient \
@@ -22,7 +22,7 @@ LIBS = -lmongoclient \
 			 -lssl \
 			 -lcrypto
 
-INCLUDE_PATH = -I/home/wxf/workplace/mongo-cxx-driver/build/install/include/
+INCLUDE_PATH = -I/home/wuxiaofei-xy/workplace/mongo-cxx-driver/build/install/include/
 
 .PHONY: all clean version
 

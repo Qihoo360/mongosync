@@ -4,7 +4,7 @@
 
 #include "mongo/client/dbclient.h"
 
-#define BATCH_BUFFER_SIZE (1024)
+#define BATCH_BUFFER_SIZE (16*1024*1024)
 
 
 enum OplogProcessOp {
@@ -36,8 +36,8 @@ struct OplogTime {
 		no(_no) {
 	}
 
-	int32_t sec; //the unix time in secon
 	int32_t no; //the logical time rank with 1 second
+	int32_t sec; //the unix time in secon
 };
 
 struct Options {
@@ -137,7 +137,7 @@ private:
 
 	void CloneCollIndex(std::string sns, std::string dns);
 	void GenericProcessOplog(OplogProcessOp op);
-	void ProcessSingleOplog(const std::string& db, const std::string& coll, const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op);
+	void ProcessSingleOplog(const std::string& db, const std::string& coll, std::string& dst_db, std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op);
 	void ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog);
 	void ApplyCmdOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_coll = true);
 	mongo::DBClientConnection* ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd);
@@ -166,7 +166,7 @@ private:
 	}
 
 	bool need_sync_oplog() {
-		return !opt_.raw_oplog && opt_.raw_oplog;
+		return !opt_.raw_oplog && opt_.oplog;
 	}
 
 	MongoSync(const MongoSync&);

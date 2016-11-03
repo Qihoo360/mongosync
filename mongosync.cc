@@ -31,9 +31,11 @@ static void Usage() {
 	std::cerr << "--src_srv arg            the source mongodb server's ip port" << std::endl;
 	std::cerr << "--src_user arg           the source mongodb server's logging user" << std::endl;
 	std::cerr << "--src_passwd arg         the source mongodb server's logging password" << std::endl;
+	std::cerr << "--src_auth_db arg        the source mongodb server's auth db" << std::endl;
 	std::cerr << "--dst_srv arg            the destination mongodb server's ip port" << std::endl;
 	std::cerr << "--dst_user arg           the destination mongodb server's logging user" << std::endl;
 	std::cerr << "--dst_passwd arg         the destination mongodb server's logging password" << std::endl;
+	std::cerr << "--dst_auth_db arg        the destination mongodb server's auth db" << std::endl;
 	std::cerr << "--db arg                 the source database to be cloned" << std::endl;
 	std::cerr << "--dst_db arg             the destination database" << std::endl;
 	std::cerr << "--coll arg               the source collection to be cloned" << std::endl;
@@ -61,12 +63,16 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 			opt->src_user = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_passwd") == 0) {
 			opt->src_passwd = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--src_auth_db") == 0) {
+			opt->src_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
 			opt->dst_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_user") == 0) {
 			opt->dst_user = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_passwd") == 0) {
 			opt->dst_passwd = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--dst_auth_db") == 0) {
+			opt->dst_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
 			opt->dst_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--db") == 0) {
@@ -132,7 +138,7 @@ MongoSync* MongoSync::NewMongoSync(const Options& opt) {
 
 int32_t MongoSync::InitConn() {
 	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port, opt_.src_auth_db, opt_.src_user, opt_.src_passwd))
-			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_ip_port, opt_.dst_user, opt_.dst_passwd))) {
+			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_auth_db, opt_.dst_user, opt_.dst_passwd))) {
 		return -1;	
 	}
 	src_version_ = GetMongoVersion(src_conn_);
@@ -151,11 +157,11 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(std::string srv_ip_port, st
 	}	std::cerr << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
 	if (!passwd.empty()) {
 		if (!conn->auth(auth_db, user, passwd, errmsg)) {
-			std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed"; 
+			std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
 			delete conn;
 			return NULL;
 		}
-		std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!";
+		std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
 	}
 	return conn;
 }
@@ -197,15 +203,22 @@ void MongoSync::SyncOplog() {
 void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
 	if (!opt_.db.empty() && opt_.coll.empty()) {
-		query = mongo::Query(BSON("ns" << BSON("$regex" << ("^"+opt_.db)) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
+		query = mongo::Query(BSON("ns" << BSON("$regex" << ("^"+opt_.db)) << "ts" << mongo::GT << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
 	} else if (!opt_.db.empty() && !opt_.coll.empty()) {
 		NamespaceString ns(opt_.db, opt_.coll);
 		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) << BSON("ns" << ns.db() + ".system.indexes") << BSON("ns" << ns.db() + ".system.$cmd"))
 															<< "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp()));
 	}
 	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL, mongo::QueryOption_CursorTailable | mongo::QueryOption_AwaitData);
-	NamespaceString ns(opt_.dst_oplog_ns);
-	std::string dst_db = ns.db(), dst_coll = ns.coll(); 
+    std::string dst_db, dst_coll;
+    if (need_clone_oplog()) {
+	    NamespaceString ns(opt_.dst_oplog_ns);
+	    dst_db = ns.db(),
+        dst_coll = ns.coll(); 
+    } else {
+        dst_db = opt_.dst_db;
+        dst_coll = opt_.dst_coll; 
+    }
 	mongo::BSONObj oplog;	
 	OplogTime cur_times;
 	while (true) {
@@ -213,8 +226,9 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 			sleep(1);
 		}
 		oplog = cursor->next();	
-		ProcessSingleOplog(opt_.db, opt_.coll, dst_db, dst_coll, oplog, op);
+		ProcessSingleOplog(opt_.db, opt_.coll, dst_db, dst_coll, oplog.getOwned(), op);
 		memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));	
+        std::cerr << "\rProgress sync to timestamp: " << cur_times.sec << "," << cur_times.no << "       ";
 		if (!before(cur_times, oplog_finish_)) {
 			break;
 		}
@@ -222,6 +236,7 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 			break;	
 		}
 	}
+    std::cerr << std::endl;
 	
 }
 
@@ -234,7 +249,7 @@ void MongoSync::CloneDb() {
 	for (std::vector<std::string>::const_iterator iter = colls.begin();
 			iter != colls.end();
 			++iter) {
-		CloneColl(opt_.db + "." + *iter, opt_.dst_db + "." + *iter);
+		CloneColl(opt_.db + "." + *iter, dst_db + "." + *iter);
 	}
 }
 
@@ -251,7 +266,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	while (cursor->more()) {
 		mongo::BSONObj obj = cursor->next();
 		acc_size += obj.objsize();
-		batch.push_back(obj);
+		batch.push_back(obj.getOwned());
 		if (acc_size >= batch_size) {
 			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError);
 			batch.clear();
@@ -277,7 +292,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 }
 
 void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
-	std::cerr << "\rcloning" << sns << " indexes" << std::endl;
+	std::cerr << "\rcloning " << sns << " indexes" << std::endl;
 	mongo::BSONObj indexes;
 	if (GetCollIndexesByVersion(src_conn_, src_version_, sns, indexes) == -1) {
 		return;
@@ -303,19 +318,27 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 	std::cerr << "\rclone " << sns << " indexes success" << std::endl;
 }
 
-void MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op) {
+void MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string& dst_db, std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op) {
+    std::string oplog_ns = oplog.getStringField("ns");	
 	if (!db.empty()) {
-		std::string oplog_ns = oplog.getStringField("ns");	
 		std::string sns = db + "." + (coll.empty() ? "" : coll);
 		if (oplog_ns.size() < sns.size() || oplog_ns.substr(0, sns.size()) != sns) {
 			return;
 		}
 	}
 	std::string dns = dst_db + "." + dst_coll;
-	if (op == kClone) { 
+	if (op == kClone) {
 		dst_conn_->insert(dns, oplog);
 		return;
 	}
+
+    if (dst_db.empty()) {
+        dst_db = db.empty() ? NamespaceString(oplog_ns).db() : db;
+    }
+    if (dst_coll.empty()) {
+        dst_coll = coll.empty() ? NamespaceString(oplog_ns).coll() : coll;
+    }
+   
 	std::string type = oplog.getStringField("op");
 	mongo::BSONObj obj = oplog.getObjectField("o");
 	switch(type.at(0)) {
@@ -336,7 +359,7 @@ void MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 }
 
 void MongoSync::ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog) {
-	assert(!dst_db.empty() && dst_coll.empty());
+	assert(!dst_db.empty() && !dst_coll.empty());
 
 	mongo::BSONObj obj = oplog.getObjectField("o");
 	std::string ns = oplog.getStringField("ns");
@@ -395,14 +418,17 @@ OplogTime MongoSync::GetSideOplogTime(mongo::DBClientConnection* conn, std::stri
 	int32_t order = first_or_last ? 1 : -1;	
 	mongo::BSONObj obj;
 	if (db.empty() || coll.empty()) {
-		obj = conn->findOne(oplog_ns_, mongo::Query().sort("ts", order), NULL, mongo::QueryOption_SlaveOk);	
+//		obj = conn->findOne(oplog_ns_, mongo::Query().sort("ts", order), NULL, mongo::QueryOption_SlaveOk);	
+		obj = conn->findOne(oplog_ns_, mongo::Query().sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);	
 	} else if (!db.empty() && coll.empty()) {
-		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("ns" << BSON("$regex" << db))).sort("ts", order), NULL, mongo::QueryOption_SlaveOk);
+//		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("ns" << BSON("$regex" << db))).sort("ts", order), NULL, mongo::QueryOption_SlaveOk);
+		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("ns" << BSON("$regex" << db))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
 	} else if (!db.empty() && !coll.empty()) {
 		NamespaceString ns(db, coll);
 		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) 
 																																					<< BSON("ns" << ns.db() + ".system.indexes")
-																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("ts", order), NULL, mongo::QueryOption_SlaveOk);
+//																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("ts", order), NULL, mongo::QueryOption_SlaveOk);
+																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
 	} else {
 		std::cerr << "get side oplog time erorr" << std::endl;
 		exit(-1);
@@ -413,7 +439,7 @@ OplogTime MongoSync::GetSideOplogTime(mongo::DBClientConnection* conn, std::stri
 std::string MongoSync::GetMongoVersion(mongo::DBClientConnection* conn) {
 	std::string version;
 	mongo::BSONObj build_info;
-	conn->simpleCommand("admin", &build_info, "build_info");
+	bool ok = conn->simpleCommand("admin", &build_info, "buildInfo");
 	if (build_info["version"].trueValue()) {
 		version = build_info.getStringField("version");
 	}
@@ -443,13 +469,15 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 		std::string coll;
 		while (cursor->more()) {
 			tmp = cursor->next();
+            std::cerr << "tmp: " << tmp.toString() << std::endl;
 			coll = tmp.getStringField("name");
 			if (mongoutils::str::endsWith(coll.c_str(), ".system.namespaces") 
 					|| mongoutils::str::endsWith(coll.c_str(), ".system.users") 
-					|| mongoutils::str::endsWith(coll.c_str(), ".system.indexes")) {
+					|| mongoutils::str::endsWith(coll.c_str(), ".system.indexes")
+                    || mongoutils::str::endsWith(coll.c_str(), ".$_id_")) {
 				continue;
 			}
-			colls.push_back(coll);
+			colls.push_back(coll.substr(coll.find(".")+1));
 		}	
 	} else {
 		std::cerr << version << " is not supported" << std::endl;
