@@ -268,7 +268,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 		acc_size += obj.objsize();
 		batch.push_back(obj.getOwned());
 		if (acc_size >= batch_size) {
-			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError);
+			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
 			batch.clear();
 			acc_size = 0;
 		}
@@ -281,7 +281,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 		}
 	}
 	if (!batch.empty()) {
-		dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError);
+		dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
 	}
 	marks.assign(100, '#');
 	blanks.assign(105-100, ' ');
@@ -301,7 +301,7 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 	mongo::BSONElement element;
 	mongo::BSONObjBuilder builder;
 	while (idx < indexes_num) {
-		mongo::BSONObjIterator i(indexes.getObjectField(std::to_string(idx++)));
+		mongo::BSONObjIterator i(indexes.getObjectField(util::Int2Str(idx++)));
 		std::string field_name;
 		while (i.more()) {
 			element = i.next();
@@ -440,7 +440,7 @@ std::string MongoSync::GetMongoVersion(mongo::DBClientConnection* conn) {
 	std::string version;
 	mongo::BSONObj build_info;
 	bool ok = conn->simpleCommand("admin", &build_info, "buildInfo");
-	if (build_info["version"].trueValue()) {
+	if (ok && build_info["version"].trueValue()) {
 		version = build_info.getStringField("version");
 	}
 	return version;
@@ -457,8 +457,8 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 		}
 		array = tmp.getObjectField("cursor").getObjectField("firstBatch");
 		int32_t idx = 0;
-		while (array.hasField(std::to_string(idx))) {
-			colls.push_back(array.getObjectField(std::to_string(idx++)).getStringField("name"));
+		while (array.hasField(util::Int2Str(idx))) {
+			colls.push_back(array.getObjectField(util::Int2Str(idx++)).getStringField("name"));
 		} 
 	} else if (version_header == "2.4." || version_header == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor = conn->query(db + ".system.namespaces", mongo::Query(), 0, 0, NULL, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
@@ -469,7 +469,6 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 		std::string coll;
 		while (cursor->more()) {
 			tmp = cursor->next();
-            std::cerr << "tmp: " << tmp.toString() << std::endl;
 			coll = tmp.getStringField("name");
 			if (mongoutils::str::endsWith(coll.c_str(), ".system.namespaces") 
 					|| mongoutils::str::endsWith(coll.c_str(), ".system.users") 
@@ -529,3 +528,5 @@ void MongoSync::SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::st
 		exit(-1);
 	}
 }
+
+const std::string MongoSync::oplog_ns_ = "local.oplog.rs";

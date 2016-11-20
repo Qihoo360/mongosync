@@ -29,11 +29,12 @@ struct OplogTime {
 	const OplogTime& operator=(const mongo::Timestamp_t& t) {
 		sec = t.seconds();
 		no = t.increment();
+    return *this;
 	}
 
 	OplogTime(int32_t _sec = -1, int32_t _no = -1)
-		: sec(_sec),
-		no(_no) {
+		: no(_no), 
+		sec(_sec) {
 	}
 
 	int32_t no; //the logical time rank with 1 second
@@ -41,7 +42,12 @@ struct OplogTime {
 };
 
 struct Options {
-	Options() : oplog(false), raw_oplog(false), no_index(false), dst_oplog_ns("sync.oplog") {}
+	Options()
+    : oplog(false),
+    raw_oplog(false),
+    dst_oplog_ns("sync.oplog"),
+    no_index(false) {
+   }
 
 	std::string src_ip_port;
 	std::string src_user;
@@ -105,7 +111,7 @@ public:
 	}
 private:
 		std::string ns_;
-		int32_t dot_index_;
+		size_t dot_index_;
 };
 
 void ParseOptions(int argc, char** argv, Options* opt);
@@ -133,7 +139,8 @@ private:
 	OplogTime oplog_begin_;
 	OplogTime oplog_finish_;
 
-	const std::string oplog_ns_ = "local.oplog.rs"; // TODO: Is it const
+	//const static std::string oplog_ns_ = "local.oplog.rs"; // TODO: Is it const
+	const static std::string oplog_ns_;
 
 	void CloneCollIndex(std::string sns, std::string dns);
 	void GenericProcessOplog(OplogProcessOp op);

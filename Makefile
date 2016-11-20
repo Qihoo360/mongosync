@@ -1,6 +1,6 @@
 CXX = g++
 #ifeq ($(__PERF), 1)
-CXXFLAGS = -O0 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -std=c++11 -gdwarf-2 -Wno-unused-variable
+CXXFLAGS = -O0 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -gdwarf-2 -Wno-unused-variable
 #else
 #	CXXFLAGS = -O2 -pipe -fPIC -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -std=c++11 -gdwarf-2 -Wno-unused-variable
 	# CXXFLAGS = -Wall -W -DDEBUG -g -O0 -D__XDEBUG__ 
@@ -10,7 +10,8 @@ SRC_DIR = ./
 OUTPUT = ./output
 
 LIB_PATH = -L/home/wuxiaofei-xy/workplace/mongo-cxx-driver/build/install/lib/ \
-					 -L/usr/local/lib/
+					 -L/usr/local/lib/ \
+					 -L/usr/lib64/
 
 LIBS = -lmongoclient \
 			 -lm \
@@ -20,7 +21,8 @@ LIBS = -lmongoclient \
 			 -lboost_system-mt \
 			 -lrt \
 			 -lssl \
-			 -lcrypto
+			 -lcrypto \
+			 -lsasl2
 
 INCLUDE_PATH = -I/home/wuxiaofei-xy/workplace/mongo-cxx-driver/build/install/include/
 
