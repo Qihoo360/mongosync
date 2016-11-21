@@ -21,6 +21,8 @@
 #include "mongo/client/write_operation.h"
 #include "mongo/db/jsobj.h"
 
+#include <iostream>
+
 namespace mongo {
 
     // For backwards compatibility. See MongoDB src/mongo/base/error_codes.err
@@ -207,9 +209,12 @@ namespace mongo {
     }
 
     void WriteResult::_check(bool throwSoftErrors) {
-        if (hasWriteErrors())
+        if (hasWriteErrors()) {
+            std::cerr << "last write error: " << writeErrors().back().toString() << std::endl;
             throw OperationException(writeErrors().back());
+        }
         if (throwSoftErrors && hasWriteConcernErrors()) {
+            std::cerr << "last write error: " << writeConcernErrors().back().toString() << std::endl;
             throw OperationException(writeConcernErrors().front());
         }
     }

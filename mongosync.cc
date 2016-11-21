@@ -262,17 +262,19 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	std::cerr << "clone "	<< src_ns << std::endl;
 	uint64_t total = src_conn_->count(src_ns, opt_.filter, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout), cnt = 0;
 	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(src_ns, opt_.filter, 0, 0, NULL, mongo::QueryOption_SlaveOk);
-	std::vector<mongo::BSONObj> batch;
+	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
 	int32_t acc_size = 0, percent = 0;
 	uint64_t st = time(NULL);
 	std::string marks, blanks;
 	while (cursor->more()) {
 		mongo::BSONObj obj = cursor->next();
 		acc_size += obj.objsize();
-		batch.push_back(obj.getOwned());
+		batch->push_back(obj.getOwned());
 		if (acc_size >= batch_size) {
-			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
-			batch.clear();
+//			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
+      bg_thread_.AddWriteUnit(dst_conn_, dst_ns, batch);
+//			batch.clear();
+      batch = new std::vector<mongo::BSONObj>;
 			acc_size = 0;
 		}
 		++cnt;
@@ -283,9 +285,15 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 			std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s";	
 		}
 	}
-	if (!batch.empty()) {
-		dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
+	if (!batch->empty()) {
+//		dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
+    bg_thread_.AddWriteUnit(dst_conn_, dst_ns, batch);
 	}
+
+  while (!bg_thread_.write_queue_p()->empty()) {
+    sleep(1);
+  }
+
 	marks.assign(100, '#');
 	blanks.assign(105-100, ' ');
 	std::cerr << "\rProgress  " << marks << blanks << 100 << "%,  elapsed time: " << time(NULL)-st << "s" << std::endl;;
@@ -421,16 +429,13 @@ OplogTime MongoSync::GetSideOplogTime(mongo::DBClientConnection* conn, std::stri
 	int32_t order = first_or_last ? 1 : -1;	
 	mongo::BSONObj obj;
 	if (db.empty() || coll.empty()) {
-//		obj = conn->findOne(oplog_ns_, mongo::Query().sort("ts", order), NULL, mongo::QueryOption_SlaveOk);	
-		obj = conn->findOne(oplog_ns_, mongo::Query().sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);	
+		obj = conn->findOne(oplog_ns, mongo::Query().sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);	
 	} else if (!db.empty() && coll.empty()) {
-//		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("ns" << BSON("$regex" << db))).sort("ts", order), NULL, mongo::QueryOption_SlaveOk);
-		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("ns" << BSON("$regex" << db))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
+		obj = conn->findOne(oplog_ns, mongo::Query(BSON("ns" << BSON("$regex" << db))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
 	} else if (!db.empty() && !coll.empty()) {
 		NamespaceString ns(db, coll);
-		obj = conn->findOne(oplog_ns_, mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) 
+		obj = conn->findOne(oplog_ns, mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) 
 																																					<< BSON("ns" << ns.db() + ".system.indexes")
-//																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("ts", order), NULL, mongo::QueryOption_SlaveOk);
 																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
 	} else {
 		std::cerr << "get side oplog time erorr" << std::endl;

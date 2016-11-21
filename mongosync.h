@@ -3,9 +3,9 @@
 #include <string>
 
 #include "mongo/client/dbclient.h"
+#include "util.h"
 
 #define BATCH_BUFFER_SIZE (16*1024*1024)
-
 
 enum OplogProcessOp {
 	kClone,
@@ -144,6 +144,9 @@ private:
 
 	//const static std::string oplog_ns_ = "local.oplog.rs"; // TODO: Is it const
 	const static std::string oplog_ns_;
+
+  //backgroud thread for Batch write
+  util::BGThread bg_thread_; 
 
 	void CloneCollIndex(std::string sns, std::string dns);
 	void GenericProcessOplog(OplogProcessOp op);
