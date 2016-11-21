@@ -75,7 +75,7 @@ namespace mongo {
 
     const int defaultMaxBsonObjectSize = 16 * 1024 * 1024;
     const int defaultMaxMessageSizeBytes = defaultMaxBsonObjectSize * 2;
-    const int defaultMaxWriteBatchSize = 1000;
+    const int defaultMaxWriteBatchSize = INT_MAX;
 
     namespace {
         const char kMongoDBURL[] =

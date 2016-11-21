@@ -558,7 +558,7 @@ params = json.dumps({
 })
 
 # Check if a standalone mongod is already up, resetting if it is
-MO_MAX_RETRIES = 10
+MO_MAX_RETRIES = 1
 for attempt in range(1, MO_MAX_RETRIES+1):
 
     if attempt > 1:

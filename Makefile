@@ -8,13 +8,14 @@ CXXFLAGS = -O0 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arit
 OBJECT = mongosync
 SRC_DIR = ./
 OUTPUT = ./output
+DRIVER_DIR = ./dep/mongo-cxx-driver-legacy-1.0.0
+DRIVER_LIB = $(DRIVER_DIR)/build/install/lib/libmongoclient.a
 
-LIB_PATH = -L/home/wuxiaofei-xy/workplace/mongo-cxx-driver/build/install/lib/ \
+LIB_PATH = -L$(DRIVER_DIR)/build/install/lib/ \
 					 -L/usr/local/lib/ \
 					 -L/usr/lib64/
 
-LIBS = -lmongoclient \
-			 -lm \
+LIBS = -lm \
 			 -lpthread \
 			 -lboost_regex-mt \
 			 -lboost_thread-mt \
@@ -22,9 +23,9 @@ LIBS = -lmongoclient \
 			 -lrt \
 			 -lssl \
 			 -lcrypto \
-			 -lsasl2
+#			 -lsasl2
 
-INCLUDE_PATH = -I/home/wuxiaofei-xy/workplace/mongo-cxx-driver/build/install/include/
+INCLUDE_PATH = -I$(DRIVER_DIR)/build/install/include/
 
 .PHONY: all clean version
 
@@ -44,8 +45,11 @@ all: $(OBJECT)
 	@echo "Success, go, go, go..."
 
 
-mongosync: $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(INCLUDE_PATH) $(LIB_PATH) $(LIBS)
+mongosync: $(DRIVER_LIB) $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(DRIVER_LIB) $(INCLUDE_PATH) $(LIB_PATH) $(LIBS)
+
+$(DRIVER_LIB):
+	scons -C $(DRIVER_DIR) install
 
 $(OBJS): %.o : %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@ $(INCLUDE_PATH) 
