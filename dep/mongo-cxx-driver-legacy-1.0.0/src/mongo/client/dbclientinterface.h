@@ -726,7 +726,7 @@ namespace mongo {
             @param[out] authLevel       level of authentication for the given user
             @return true if successful
         */
-        bool auth(const std::string &dbname, const std::string &username, const std::string &pwd, std::string& errmsg, bool digestPassword = true);
+        bool auth(const std::string &dbname, const std::string &username, const std::string &pwd, std::string& errmsg, bool forceUseMcr = false, bool digestPassword = true);
 
         /**
          * Logs out the connection for the given database.

@@ -966,10 +966,11 @@ namespace mongo {
                                     const string &username,
                                     const string &password_text,
                                     string& errmsg,
+																		bool forceUseMcr,
                                     bool digestPassword) {
         try {
             const char* mech = kAuthMechMongoCR;
-            if( _maxWireVersion >= 3 ) {
+            if( !forceUseMcr && _maxWireVersion >= 3 ) {
                 mech = kAuthMechScramSha1;
             }
             _auth(BSON(saslCommandMechanismFieldName << mech <<

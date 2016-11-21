@@ -46,7 +46,8 @@ struct Options {
     : oplog(false),
     raw_oplog(false),
     dst_oplog_ns("sync.oplog"),
-    no_index(false) {
+    no_index(false),
+		use_mcr(false) {
    }
 
 	std::string src_ip_port;
@@ -74,6 +75,8 @@ struct Options {
 
 	bool no_index;
 	mongo::Query filter;
+
+	bool use_mcr;
 };
 
 class NamespaceString {
@@ -147,7 +150,7 @@ private:
 	void ProcessSingleOplog(const std::string& db, const std::string& coll, std::string& dst_db, std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op);
 	void ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog);
 	void ApplyCmdOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_coll = true);
-	mongo::DBClientConnection* ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd);
+	mongo::DBClientConnection* ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd, bool use_mcr);
 	OplogTime GetSideOplogTime(mongo::DBClientConnection* conn, std::string ns, std::string db, std::string coll, bool first_or_last); //first_or_last==true->get the first timestamp; first_or_last==false->get the last timestamp
 
 	std::string GetMongoVersion(mongo::DBClientConnection* conn);

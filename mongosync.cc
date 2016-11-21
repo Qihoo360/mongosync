@@ -47,6 +47,7 @@ static void Usage() {
 	std::cerr << "--dst_op_ns arg          the destination namespace for raw oplog mode" << std::endl;
 	std::cerr << "--no_index               whether to clone the db or collection corresponding index" << std::endl;
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
+	std::cerr << "--use_mcr                force use MONGODB-CR password machenism" << std::endl;
 }
 
 void ParseOptions(int argc, char** argv, Options* opt) {
@@ -103,6 +104,8 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 			opt->no_index = true;
 		} else if (strcasecmp(argv[idx], "--filter") == 0) {
 			opt->filter = mongo::Query(argv[++idx]);
+		} else if (strcasecmp(argv[idx], "--use_mcr") == 0) {
+			opt->use_mcr = true;
 		} else {
 			std::cerr << "Unkown options" << std::endl;
 			Usage();
@@ -137,8 +140,8 @@ MongoSync* MongoSync::NewMongoSync(const Options& opt) {
 }
 
 int32_t MongoSync::InitConn() {
-	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port, opt_.src_auth_db, opt_.src_user, opt_.src_passwd))
-			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_auth_db, opt_.dst_user, opt_.dst_passwd))) {
+	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port, opt_.src_auth_db, opt_.src_user, opt_.src_passwd, opt_.use_mcr))
+			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_auth_db, opt_.dst_user, opt_.dst_passwd, opt_.use_mcr))) {
 		return -1;	
 	}
 	src_version_ = GetMongoVersion(src_conn_);
@@ -146,7 +149,7 @@ int32_t MongoSync::InitConn() {
 	return 0;
 }
 
-mongo::DBClientConnection* MongoSync::ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd) {
+mongo::DBClientConnection* MongoSync::ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd, bool use_mcr) {
 	std::string errmsg;
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
@@ -156,7 +159,7 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(std::string srv_ip_port, st
 		return NULL;
 	}	std::cerr << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
 	if (!passwd.empty()) {
-		if (!conn->auth(auth_db, user, passwd, errmsg)) {
+		if (!conn->auth(auth_db, user, passwd, errmsg, use_mcr)) {
 			std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
 			delete conn;
 			return NULL;
