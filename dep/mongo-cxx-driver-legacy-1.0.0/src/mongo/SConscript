@@ -1,0 +1,138 @@
+Import('env windows mongoClientStaticLibs libGTestStatic')
+
+testEnv = env.Clone()
+conf = Configure(testEnv)
+conf.CheckLibWithHeader('curl', 'curl/curl.h', 'c')
+testEnv = conf.Finish()
+
+staticClientEnv = testEnv.Clone()
+staticClientEnv.PrependUnique(
+    CPPDEFINES=[
+        'STATIC_LIBMONGOCLIENT'
+    ],
+    LIBS=mongoClientStaticLibs,
+)
+
+libMock = staticClientEnv.StaticLibrary(
+    target='mocklib',
+    source=[
+        "dbtests/mock/mock_conn_registry.cpp",
+        "dbtests/mock/mock_dbclient_connection.cpp",
+        "dbtests/mock/mock_dbclient_cursor.cpp",
+        "dbtests/mock/mock_remote_db_server.cpp",
+        "dbtests/mock/mock_replica_set.cpp",
+    ],
+)
+
+libUnitTestMain = staticClientEnv.StaticLibrary(
+    target='unit_test_main',
+    source=[
+        'unittest/unit_test_main.cpp'
+    ],
+)
+
+libIntegrationTestMain = staticClientEnv.StaticLibrary(
+    target='integration_test_main',
+    source=[
+        '../third_party/restclient/restclient.cpp',
+        '../third_party/jsoncpp/jsoncpp.cpp',
+        'orchestration/resource.cpp',
+        'orchestration/mongo_resource.cpp',
+        'orchestration/server.cpp',
+        'orchestration/service.cpp',
+        'orchestration/replica_set.cpp',
+        'orchestration/sharded_cluster.cpp',
+        'integration/integration_test_main.cpp'
+    ],
+)
+
+unittests = [
+    'base/data_cursor_test',
+    'base/data_view_test',
+    'base/encoded_value_storage_test',
+    'base/parse_number_test',
+    'bson/bson_field_test',
+    'bson/bson_obj_test',
+    'bson/oid_test',
+    'bson/bson_validate_test',
+    'bson/bsonobjbuilder_test',
+    'bson/util/builder_test',
+    'bson/util/bson_extract_test',
+    'client/connection_string_test',
+    'client/dbclient_rs_test',
+    'client/index_spec_test',
+    'client/replica_set_monitor_test',
+    'client/write_concern_test',
+    'db/dbmessage_test',
+    'db/namespace_string_test',
+    'dbtests/jsobjtests',
+    'dbtests/jsontests',
+    'dbtests/mock_dbclient_conn_test',
+    'dbtests/mock_replica_set_test',
+    'dbtests/replica_set_monitor_test',
+    'geo/geo_test',
+    'logger/log_test',
+    'platform/atomic_word_test',
+    'platform/endian_test',
+    'platform/random_test',
+    'unittest/connection_string_test',
+    'unittest/query_test',
+    'util/mongoutils/str_test',
+    'util/net/hostandport_test',
+    'util/net/sock_test',
+    'util/string_map_test',
+    'util/stringutils_test',
+    'util/time_support_test',
+]
+
+if env['MONGO_SSL']:
+   unittests += ['crypto/crypto_test']
+
+gtestEnv = staticClientEnv.Clone()
+gtestEnv.PrependUnique(
+    # On windows, we need this odd flag to make the linker
+    # search for main in our _test_main libs.
+    LINKFLAGS=(['/SUBSYSTEM:CONSOLE'] if windows else []),
+    LIBS=[
+        libGTestStatic,
+    ])
+
+unitTestEnv = gtestEnv.Clone()
+unitTestEnv.PrependUnique(
+    LIBS=[
+        libUnitTestMain,
+        libMock,
+    ])
+
+for unittest in unittests:
+    unitTestEnv.CppUnitTest(
+        target=unittest,
+        source=[
+            unittest + '.cpp'
+        ])
+
+integration_tests = [
+    'standalone/bulk_operation_test',
+    'standalone/dbclient_test',
+    'standalone/dbclient_writer_test',
+    'standalone/gridfs_test',
+    'replica_set/basic',
+    'replica_set/read_preference'
+]
+
+if env['MONGO_SASL']:
+   integration_tests += ['standalone/sasl_test']
+
+integrationTestEnv = gtestEnv.Clone()
+integrationTestEnv.PrependUnique(
+    LIBS=[
+        libIntegrationTestMain
+    ])
+
+for integration_test in integration_tests:
+    integrationTestEnv.IntegrationTest(
+        target=integration_test,
+        source=[
+            'integration/' + integration_test + '.cpp'
+        ]
+    )

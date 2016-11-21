@@ -1,0 +1,4 @@
+# -*- mode: python -*-
+
+Import("env")
+env.SConscript('gtest-1.7.0/SConscript')

@@ -1,0 +1,671 @@
+#######################################
+#      CXX Driver Config for MCI      #
+#######################################
+
+## Some variables for convenience:
+
+cxx_driver_variables:
+
+## The basic set of tests to run on most buildvariants
+  latest_test_list: &latest_tests
+    - name: "compile"
+    - name: "unit test"
+    - name: "integration test latest"
+    - name: "client test latest"
+
+  storage_engine_test_list: &storage_engine_tests
+    - name: "compile"
+    - name: "unit test"
+    - name: "integration test latest"
+    - name: "integration test latest with inMemoryExperiment"
+    - name: "integration test latest with WiredTiger"
+    - name: "client test latest"
+    - name: "client test latest with inMemoryExperiment"
+    - name: "client test latest with WiredTiger"
+
+  version_test_list: &version_tests
+    - name: "compile"
+    - name: "unit test"
+    - name: "integration test 2.2"
+    - name: "integration test 2.4"
+    - name: "integration test 2.6"
+    - name: "integration test 3.0"
+    - name: "integration test latest"
+    - name: "client test 2.2"
+    - name: "client test 2.4"
+    - name: "client test 2.6"
+    - name: "client test 3.0"
+    - name: "client test latest"
+
+## Common download urls (merge in as hashes)
+  mongo_download_url_prefixes:
+    ubuntu1404: &mongo_url_ubuntu1404
+      mongo_url_prefix: "http://downloads.mongodb.com/linux/mongodb-linux-x86_64-"
+      mongo_url_platform: "ubuntu1404-"
+    windows64-bitcomm: &mongo_url_windows64
+      mongo_url_prefix: "http://downloads.mongodb.com/win32/mongodb-win32-x86_64-"
+      mongo_url_platform: "windows-64-"
+    windows32: &mongo_url_windows32
+      mongo_url_prefix: "http://downloads.mongodb.org/win32/mongodb-win32-i386-"
+      mongo_url_enterprise_keyword: ""
+    rhel55: &mongo_url_rhel55
+      mongo_url_prefix: "http://downloads.mongodb.com/linux/mongodb-linux-x86_64-"
+      mongo_url_platform: "rhel57-"
+    rhel55_32: &mongo_url_rhel55_32
+      mongo_url_prefix: "http://downloads.mongodb.org/linux/mongodb-linux-i686-"
+      mongo_url_enterprise_keyword: ""
+      mongo_url_subscription_keyword: ""
+    osx-108: &mongo_url_osx_108
+      mongo_url_prefix: "http://downloads.mongodb.org/osx/mongodb-osx-x86_64-"
+      mongo_url_enterprise_keyword: ""
+
+## Common sets of scons flags
+  scons_flags:
+    standard: &scons_flags_64
+      scons_flags: "--64 -j$(grep -c ^processor /proc/cpuinfo) --ssl --use-sasl-client --sharedclient"
+    standard_32: &scons_flags_32
+      scons_flags: "--32 -j$(grep -c ^processor /proc/cpuinfo) --ssl --use-sasl-client --sharedclient"
+    ubuntu_c++11: &scons_flags_cpp11
+      scons_flags: "--64 -j$(grep -c ^processor /proc/cpuinfo) --c++11 --ssl --use-sasl-client --sharedclient"
+    osx_108: &scons_flags_osx_108
+      scons_flags: "--64 -j$(sysctl -n hw.logicalcpu) --ssl --use-sasl-client --sharedclient --osx-version-min=10.6"
+    ## test all plausible combinations of static/dynamic mongo client and windows runtime:
+    static_windows: &scons_flags_64_windows_static
+      scons_flags: "--64 -j$(grep -c ^processor /proc/cpuinfo) --ssl --use-sasl-client"
+    dynamic_RT_windows: &scons_flags_64_windows_dynamic_rt
+      scons_flags: "--64 -j$(grep -c ^processor /proc/cpuinfo) --ssl --use-sasl-client --dynamic-windows"
+    dynamic_windows: &scons_flags_64_windows_dynamic
+      scons_flags: "--64 -j$(grep -c ^processor /proc/cpuinfo) --ssl --use-sasl-client --dynamic-windows --sharedclient"
+    32bit_windows: &scons_flags_32_windows_dynamic
+      scons_flags: "--32 -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --sharedclient"
+
+## Special compile flags
+  compile_flags:
+    debug: &compile_flags_debug
+      compile_flags: "--dbg=on"
+
+  ## Scripts that are shared between buildvariants
+  scripts:
+    mongo_orchestration:
+      windows: &mongo_orchestration_windows
+        start_mongo_orchestration: |
+          echo "Installing Mongo Orchestration..."
+          trap 'set +o errexit; mongo-orchestration stop;' EXIT
+          taskkill.exe /fi python /f
+          git clone https://github.com/10gen/mongo-orchestration.git
+          cd mongo-orchestration
+          python setup.py install
+          cd ..
+          echo "Starting Mongo Orchestration..."
+          echo "{ \"releases\": { \"default\": \"c:\\\\mongodb\\\\bin\" }, \"last_updated\": \"2014-08-29 20:57:00.000000\" }" > orchestration.config
+          mongo-orchestration -f orchestration.config -e default -s wsgiref start
+      linux: &mongo_orchestration_linux
+        ## we are going to manually install mongo-orchestration for now on Linux until it is stable enough that we don't always to install from HEAD
+        start_mongo_orchestration: |
+          echo "Installing Mongo Orchestration..."
+          trap 'set +o errexit; mongo-orchestration stop;' EXIT
+          git clone https://github.com/10gen/mongo-orchestration.git
+          cd mongo-orchestration
+          if [ "$(whoami)" != "root" ]; then
+              sudo python setup.py install
+              sudo chown -R ubuntu .
+          else
+              python setup.py install
+          fi
+          cd ..
+          echo "Starting Mongo Orchestration..."
+          echo "{ \"releases\": { \"default\": \"`pwd`/mongodb/bin\" }, \"last_updated\": \"2014-08-29 20:57:00.000000\" }" > orchestration.config
+          TMPDIR=/data/db mongo-orchestration -f orchestration.config -e default start
+      osx: &mongo_orchestration_osx
+        start_mongo_orchestration: |
+          echo "Starting Mongo Orchestration..."
+          trap 'set +o errexit; /usr/local/bin/mongo-orchestration stop;' EXIT
+          echo "{ \"releases\": { \"default\": \"`pwd`/mongodb/bin\" }, \"last_updated\": \"2014-08-29 20:57:00.000000\" }" > orchestration.config
+          TMPDIR=/data/db /usr/local/bin/mongo-orchestration -f orchestration.config -e default start
+
+## Other os-specific attributes, grouped by OS
+
+## Misc. for Windows builds
+  windows_compilers:
+    ## msvc2010
+    msvc2010: &with_msvc2010
+      toolchain_flags: --msvc-version=10.0
+      libpath: --libpath="c:\local\boost_1_55_0\lib64-msvc-10.0"
+      cpppath: --cpppath="c:\local\boost_1_55_0"
+      dllpath: --runtime-library-search-path="c:\local\boost_1_55_0\lib64-msvc-10.0,c:\openssl\bin,c:\sasl\bin,c:\curl\dlls"
+      extrapath: --extrapath="c:\openssl,c:\sasl,c:\curl"
+    ## msvc2013, 32-bit boost headers
+    msvc2013-32: &with_msvc2010_32bit
+      toolchain_flags: --msvc-version=10.0
+      libpath: --libpath="c:\local\boost_1_57_0\lib32-msvc-10.0"
+      cpppath: --cpppath="c:\local\boost_1_57_0"
+      dllpath: --runtime-library-search-path="c:\local\boost_1_57_0\lib32-msvc-10.0,c:\curl\dlls"
+      extrapath: --extrapath="c:\curl"
+    msvc2013: &with_msvc2013
+      toolchain_flags: --msvc-version=12.0
+      libpath: --libpath="c:\local\boost_1_56_0\lib64-msvc-12.0"
+      cpppath: --cpppath="c:\local\boost_1_56_0"
+      dllpath: --runtime-library-search-path="c:\local\boost_1_56_0\lib64-msvc-12.0,c:\openssl\bin,c:\sasl\bin,c:\curl\dlls"
+      extrapath: --extrapath="c:\openssl,c:\sasl,c:\curl"
+
+  ## all windows buildvariants have these attributes in common
+  windows_common: &windows_common
+    mongo_url_extension: "zip"
+    scons: scons.bat
+    extension: ".exe"
+    windows: true
+    <<: *mongo_orchestration_windows
+
+## Paths for OS X builds
+  osx_fixups:
+    scons:
+      boost_headers: &extrapath_osx_108
+        extrapath: --extrapath="/opt/local"
+
+## Paths and flags for RHEL 5.5 builds
+  rhel55_fixups:
+    scons:
+      warning_flags: &warning_flags_rhel55
+        # For some reason GCC on RHEL 5.5 gives lots of warnings from its own headers when using
+        # visibility attributes.
+        warning_flags: --disable-warnings-as-errors
+    cpp:
+      cpp_boost: &cpppath_rhel55
+        cpppath: --cpppath="/usr/include/boost141"
+    lib:
+      lib32_boost: &libpath_rhel55_32
+        libpath: --libpath="/usr/lib/boost141"
+      lib64_boost: &libpath_rhel55_64
+        libpath: --libpath="/usr/lib64/boost141"
+
+#######################################
+#            Functions                #
+#######################################
+
+functions:
+  "fetch source" :
+    command: git.get_project
+    params:
+      directory: mongo-cxx-driver
+  "fetch mongodb" :
+    command: shell.exec
+    params:
+      working_dir: "mongo-cxx-driver"
+      script: |
+        set -o verbose
+        set -o errexit
+        curl -s ${mongo_url} --output mongo_enterprise.${ext|tgz}
+        ${decompress} mongo_enterprise.${ext|tgz}
+        mv mongodb* mongodb
+        chmod +x ./mongodb/bin/mongod${extension}
+        if [ ${windows|false} = true ]; then
+            cp -r mongodb /cygdrive/c/mongodb
+            #This won't run on a 32bit OS.
+            ./mongodb/bin/vcredist_x64${extension} /Q
+        fi
+
+  "fetch artifacts" :
+    command: s3.get
+    params:
+      aws_key: ${aws_key}
+      aws_secret: ${aws_secret}
+      remote_file: mongo-cxx-driver/${build_variant}/${revision}/artifacts/mongo-${build_id}.tar.gz
+      bucket: mciuploads
+      extract_to: mongo-cxx-driver
+
+  "set version latest" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "mongo_url"
+          value: ${mongo_url_prefix}${mongo_url_enterprise_keyword|"enterprise-"}${mongo_url_platform|}latest.${mongo_url_extension|tgz}
+
+  "use inMemoryExperiment storage" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "orchestration_preset"
+          value: "--mongo-orchestration-preset=in_memory.json"
+
+  "use WiredTiger storage" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "orchestration_preset"
+          value: "--mongo-orchestration-preset=wiredtiger.json"
+
+  "set version 3.0" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "mongo_url"
+          value: ${mongo_url_prefix}${mongo_url_enterprise_keyword|enterprise-}${mongo_url_platform|}3.0.0-rc6.${mongo_url_extension|tgz}
+
+  "set version 2.6" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "mongo_url"
+          value: ${mongo_url_prefix}${mongo_url_enterprise_keyword|enterprise-}${mongo_url_platform|}2.6.7.${mongo_url_extension|tgz}
+
+  "set version 2.4" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "mongo_url"
+          value: ${mongo_url_prefix}${mongo_url_subscription_keyword|subscription-}${mongo_url_platform|}2.4.12.${mongo_url_extension|tgz}
+
+  "set version 2.2" :
+    command: expansions.update
+    params:
+      updates:
+        - key: "mongo_url"
+          value: ${mongo_url_prefix}${mongo_url_subscription_keyword|subscription-}${mongo_url_platform|}2.2.7.${mongo_url_extension|tgz}
+
+  "run integration tests" :
+    command: shell.exec
+    params:
+      working_dir: "mongo-cxx-driver"
+      script: |
+        ${start_mongo_orchestration}
+        ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} ${orchestration_preset} integration
+
+  "run client tests" :
+    command: shell.exec
+    params:
+      working_dir: "mongo-cxx-driver"
+      script: |
+        ${start_mongo_orchestration}
+        ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} install # static lib install step
+        ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} check-install # static build installation header check
+        ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} ${orchestration_preset} examples
+
+pre:
+  - command: expansions.fetch
+    params:
+      keys:
+        - local_key: "aws_key"
+          remote_key: "project_aws_key"
+        - local_key: "aws_secret"
+          remote_key: "project_aws_secret"
+  - command: shell.exec
+    params:
+      script: |
+        rm -rf "mongo-cxx-driver"
+        if [ ! -e /data/db ]; then
+            mkdir /data/db
+        elif [ ! -d /data/db ]; then
+            echo "/data/db already exists and is not a directory!"
+            exit 1
+        fi
+
+post:
+  - command: shell.exec
+    params:
+      script: |
+        cd mongo-cxx-driver && mongo-orchestration stop
+        ${killall_mci|pkill -9 mongo-orchestration; pkill -9 mongod; pkill -9 mongos;}
+
+#######################################
+#               Tasks                 #
+#######################################
+
+tasks:
+    - name: lint
+      commands:
+        - func: "fetch source"
+        - command: git.apply_patch
+          params:
+            directory: "mongo-cxx-driver"
+        - command: shell.exec
+          params:
+            working_dir: "mongo-cxx-driver"
+            script: |
+                set -o errexit
+                set -o verbose
+                ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} lint
+
+    - name: compile
+      commands:
+        - func: "fetch source"
+        - command: git.apply_patch
+          params:
+            directory: "mongo-cxx-driver"
+        - command: shell.exec
+          params:
+            working_dir: "mongo-cxx-driver"
+            script: |
+                set -o errexit
+                set -o verbose
+                ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} ${compile_target|all}
+        - command: shell.exec
+          params:
+              working_dir: "mongo-cxx-driver"
+              script: |
+                set -o errexit
+                set -o verbose
+                tar -czf ../mongo-cxx-driver.tar.gz .
+        - command: s3.put
+          params:
+            aws_key: ${aws_key}
+            aws_secret: ${aws_secret}
+            local_file: mongo-cxx-driver.tar.gz
+            remote_file: mongo-cxx-driver/${build_variant}/${revision}/artifacts/mongo-${build_id}.tar.gz
+            bucket: mciuploads
+            permissions: public-read
+            content_type: ${content_type|application/x-gzip}
+
+    - name: "unit test"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "fetch artifacts"
+        - command: shell.exec
+          params:
+            working_dir: "mongo-cxx-driver"
+            script: |
+                set -o verbose
+                ${scons|scons} ${scons_flags} ${warning_flags} ${compile_flags} ${toolchain_flags} ${extrapath} ${dllpath} ${cpppath} ${libpath} unit
+
+    - name: "integration test 2.2"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 2.2"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "integration test 2.4"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 2.4"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "integration test 2.6"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 2.6"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "integration test 3.0"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 3.0"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "integration test latest"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version latest"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "integration test latest with inMemoryExperiment"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version latest"
+        - func: "use inMemoryExperiment storage"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "integration test latest with WiredTiger"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version latest"
+        - func: "use WiredTiger storage"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run integration tests"
+
+    - name: "client test 2.2"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 2.2"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+    - name: "client test 2.4"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 2.4"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+    - name: "client test 2.6"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 2.6"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+    - name: "client test 3.0"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version 3.0"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+    - name: "client test latest"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version latest"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+    - name: "client test latest with inMemoryExperiment"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version latest"
+        - func: "use inMemoryExperiment storage"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+    - name: "client test latest with WiredTiger"
+      depends_on:
+        - name: "compile"
+      commands:
+        - func: "set version latest"
+        - func: "use WiredTiger storage"
+        - func: "fetch artifacts"
+        - func: "fetch mongodb"
+        - func: "run client tests"
+
+
+#######################################
+#           Buildvariants             #
+#######################################
+
+buildvariants:
+
+#######################################
+#         Linux Buildvariants         #
+#######################################
+
+## RHEL 5.5
+
+- name: rhel55
+  display_name: "RHEL 5.5"
+  expansions:
+    <<: *scons_flags_64
+    <<: *warning_flags_rhel55
+    <<: *cpppath_rhel55
+    <<: *libpath_rhel55_64
+    <<: *mongo_url_rhel55
+    <<: *mongo_orchestration_linux
+  run_on:
+  - rhel55-test
+  tasks: *version_tests
+
+## RHEL 5.5 32-bit
+
+- name: rhel55-32-bit
+  display_name: "RHEL 5.5 32-bit"
+  expansions:
+    <<: *scons_flags_32
+    <<: *warning_flags_rhel55
+    <<: *cpppath_rhel55
+    <<: *libpath_rhel55_32
+    <<: *mongo_url_rhel55_32
+    <<: *mongo_orchestration_linux
+  run_on:
+  - rhel55-test
+  tasks: *latest_tests
+
+## Ubuntu 1404
+
+- name: ubuntu1404
+  display_name: "Ubuntu1404"
+  expansions:
+    <<: *scons_flags_64
+    <<: *mongo_url_ubuntu1404
+    <<: *mongo_orchestration_linux
+  run_on:
+  - ubuntu1404-test
+  tasks: *storage_engine_tests
+
+## Ubuntu 1404 DEBUG
+
+- name: ubuntu1404-debug
+  display_name: "Ubuntu1404 dbg"
+  expansions:
+    <<: *compile_flags_debug
+    <<: *scons_flags_64
+    <<: *mongo_url_ubuntu1404
+    <<: *mongo_orchestration_linux
+  run_on:
+  - ubuntu1404-test
+  tasks: *latest_tests
+
+## Ubuntu 1404 C++11
+
+- name: ubuntu1404-cpp11
+  display_name: "Ubuntu1404 C++11"
+  expansions:
+    <<: *scons_flags_cpp11
+    <<: *mongo_url_ubuntu1404
+    <<: *mongo_orchestration_linux
+  run_on:
+  - ubuntu1404-test
+  tasks: *latest_tests
+
+#######################################
+#         OS X Buildvariants          #
+#######################################
+
+## OS X 10.8
+
+- name: os-x-108
+  display_name: "OS X 10.8"
+  expansions:
+    <<: *mongo_url_osx_108
+    <<: *scons_flags_osx_108
+    <<: *extrapath_osx_108
+    <<: *mongo_orchestration_osx
+  run_on:
+  - osx-108
+  tasks: *latest_tests
+
+#######################################
+#        Windows Buildvariants        #
+#######################################
+
+## Windows 32-bit (msvc2010)
+## dynamic client and RT
+
+- name: windows-32-msvc2010-dyn-dyn
+  display_name: "Win32(2010) dyn-dyn"
+  expansions:
+    <<: *windows_common
+    <<: *scons_flags_32_windows_dynamic
+    <<: *mongo_url_windows32
+    <<: *with_msvc2010_32bit
+    compile_target: driver build-unit
+  run_on:
+  - windows-64-compile
+  tasks:
+    - name: "compile"
+    - name: "unit test"
+
+## Windows 64-bit (msvc2010)
+## static client and RT
+
+- name: windows-64-msvc2010-static-static
+  display_name: "Win64(2010) static-static"
+  expansions:
+    <<: *windows_common
+    <<: *scons_flags_64_windows_static
+    <<: *mongo_url_windows64
+    <<: *with_msvc2010
+  run_on:
+  - windows-64-compile
+  tasks: *latest_tests
+
+## Windows 64-bit DEBUG DYNAMIC (msvc2010)
+## dynamic client and RT
+
+- name: windows-64-msvc2010-dbg-dyn-dyn
+  display_name: "Win64(2010) dbg dyn-dyn"
+  expansions:
+    <<: *windows_common
+    <<: *compile_flags_debug
+    <<: *scons_flags_64_windows_dynamic
+    <<: *mongo_url_windows64
+    <<: *with_msvc2010
+  run_on:
+  - windows-64-compile
+  tasks: *latest_tests
+
+## Windows 64-bit DYNAMIC (msvc2013)
+## dynamic client and RT
+
+- name: windows-64-msvc2013-dyn-dyn
+  display_name: "Win64(2013) dyn-dyn"
+  expansions:
+    <<: *windows_common
+    <<: *scons_flags_64_windows_dynamic
+    <<: *mongo_url_windows64
+    <<: *with_msvc2013
+  run_on:
+  - windows-64-vs2013-compile
+  tasks: *latest_tests
+
+## Windows 64-bit (msvc2013) DYNAMIC-RT
+## static client, dynamic RT
+
+- name: windows-64-msvc-2013-static-dyn
+  display_name: "Win64(2013) static-dyn"
+  expansions:
+    <<: *windows_common
+    <<: *scons_flags_64_windows_dynamic_rt
+    <<: *mongo_url_windows64
+    <<: *with_msvc2013
+  run_on:
+  - windows-64-vs2013-compile
+  tasks: *latest_tests

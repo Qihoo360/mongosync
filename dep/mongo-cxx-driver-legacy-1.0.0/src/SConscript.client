@@ -1,0 +1,618 @@
+# -*- mode: python -*-
+
+# This SConscript describes build and install rules for the Mongo C++ driver and associated exmaple
+# programs.
+import os
+import httplib
+import urllib
+import json
+import re
+import time
+import buildscripts.git
+
+Import('env has_option get_option')
+Import('nix linux darwin windows')
+
+buildShared = False
+if has_option("sharedclient"):
+    buildShared = True
+
+libEnv = env.Clone()
+libEnv.Append(CPPDEFINES=['LIBMONGOCLIENT_BUILDING'])
+
+# We want to build the same objects in two different ways, once for a static, and once for a
+# DLL, with different defines in play. That works fine on platforms where by default
+# SHOBJSUFFIX and OBJSUFFIX differ, but by default on windows they don't. Repair that.
+if windows:
+    libEnv['SHOBJSUFFIX'] = libEnv['OBJSUFFIX'] + 's'
+
+clientEnv = env.Clone()
+clientEnv['CPPDEFINES'].remove('MONGO_EXPOSE_MACROS')
+
+# Prevent accidental usage of the unconfigured environment.
+del env
+
+libEnv.Command(['mongo/base/error_codes.h', 'mongo/base/error_codes.cpp',],
+               ['mongo/base/generate_error_codes.py', 'mongo/base/error_codes.err'],
+               '$PYTHON $SOURCES $TARGETS')
+
+def makeConfigHDefine(env, subst_key, env_var):
+    replacement = "// #undef %s"
+    value = env.get(env_var, None)
+    if value:
+        replacement = "#define %s 1"
+    return (subst_key, replacement % env_var)
+libEnv.AddMethod(makeConfigHDefine)
+
+def makeConfigHDefineWithValue(env, subst_key, env_var):
+    value = env.get(env_var)
+    replacement = "#define %s %s"
+    return (subst_key, replacement % (env_var, value))
+libEnv.AddMethod(makeConfigHDefineWithValue)
+
+configSubstitutions = [
+    libEnv.makeConfigHDefine('@mongoclient_ssl@', 'MONGO_SSL'),
+    libEnv.makeConfigHDefine('@mongoclient_sasl@', 'MONGO_SASL'),
+    libEnv.makeConfigHDefine('@mongoclient_have_header_unistd_h@', 'MONGO_HAVE_HEADER_UNISTD_H'),
+    libEnv.makeConfigHDefine('@mongoclient_have_cxx11_atomics@', 'MONGO_HAVE_CXX11_ATOMICS'),
+    libEnv.makeConfigHDefine('@mongoclient_have_gcc_atomic_builtins@', 'MONGO_HAVE_GCC_ATOMIC_BUILTINS'),
+    libEnv.makeConfigHDefine('@mongoclient_have_gcc_sync_builtins@', 'MONGO_HAVE_GCC_SYNC_BUILTINS'),
+    libEnv.makeConfigHDefine('@mongoclient_have_std_is_trivially_copyable@', 'MONGO_HAVE_STD_IS_TRIVIALLY_COPYABLE'),
+    libEnv.makeConfigHDefine('@mongoclient_have_strnlen@', 'MONGO_HAVE_STRNLEN'),
+    libEnv.makeConfigHDefineWithValue('@mongoclient_byte_order@', 'MONGO_BYTE_ORDER'),
+]
+libEnv.Substfile('mongo/config.h.in', SUBST_DICT=configSubstitutions)
+
+versionSubstitutions = [
+    ('@mongoclient_version@', libEnv['MONGOCLIENT_VERSION']),
+    ('@mongoclient_version_major@', libEnv['MONGOCLIENT_VERSION_MAJOR']),
+    ('@mongoclient_version_minor@', libEnv['MONGOCLIENT_VERSION_MINOR']),
+    ('@mongoclient_version_patch@', libEnv['MONGOCLIENT_VERSION_PATCH']),
+    ('@mongoclient_git_revision@', buildscripts.git.getGitVersion)
+]
+libEnv.Substfile('mongo/version.h.in', SUBST_DICT=versionSubstitutions)
+
+clientSourceBasic = [
+    'mongo/base/error_codes.cpp',
+    'mongo/base/global_initializer.cpp',
+    'mongo/base/global_initializer_registerer.cpp',
+    'mongo/base/init.cpp',
+    'mongo/base/initializer.cpp',
+    'mongo/base/initializer_context.cpp',
+    'mongo/base/initializer_dependency_graph.cpp',
+    'mongo/base/make_string_vector.cpp',
+    'mongo/base/parse_number.cpp',
+    'mongo/base/status.cpp',
+    'mongo/base/string_data.cpp',
+    'mongo/bson/bson_validate.cpp',
+    'mongo/bson/bsonelement.cpp',
+    'mongo/bson/bsonmisc.cpp',
+    'mongo/bson/bsonobj.cpp',
+    'mongo/bson/bsonobjbuilder.cpp',
+    'mongo/bson/bsonobjiterator.cpp',
+    'mongo/bson/bsontypes.cpp',
+    'mongo/bson/oid.cpp',
+    'mongo/bson/util/bson_extract.cpp',
+    'mongo/client/bulk_operation_builder.cpp',
+    'mongo/client/bulk_update_builder.cpp',
+    'mongo/client/bulk_upsert_builder.cpp',
+    'mongo/client/command_writer.cpp',
+    'mongo/client/dbclient.cpp',
+    'mongo/client/dbclient_rs.cpp',
+    'mongo/client/dbclientcursor.cpp',
+    'mongo/client/dbclientcursorshimarray.cpp',
+    'mongo/client/dbclientcursorshimcursorid.cpp',
+    'mongo/client/dbclientcursorshimtransform.cpp',
+    'mongo/client/delete_write_operation.cpp',
+    'mongo/client/exceptions.cpp',
+    'mongo/client/gridfs.cpp',
+    'mongo/client/index_spec.cpp',
+    'mongo/client/init.cpp',
+    'mongo/client/insert_write_operation.cpp',
+    'mongo/client/options.cpp',
+    'mongo/client/replica_set_monitor.cpp',
+    'mongo/client/sasl_client_authenticate.cpp',
+    'mongo/client/update_write_operation.cpp',
+    'mongo/client/wire_protocol_writer.cpp',
+    'mongo/client/write_concern.cpp',
+    'mongo/client/write_operation_base.cpp',
+    'mongo/client/write_result.cpp',
+    'mongo/db/dbmessage.cpp',
+    'mongo/db/json.cpp',
+    'mongo/geo/coordinates2d.cpp',
+    'mongo/geo/coordinates2dgeographic.cpp',
+    'mongo/logger/component_message_log_domain.cpp',
+    'mongo/logger/log_component.cpp',
+    'mongo/logger/log_component_settings.cpp',
+    'mongo/logger/log_manager.cpp',
+    'mongo/logger/log_severity.cpp',
+    'mongo/logger/logger.cpp',
+    'mongo/logger/logstream_builder.cpp',
+    'mongo/logger/message_event_utf8_encoder.cpp',
+    'mongo/logger/message_log_domain.cpp',
+    'mongo/platform/random.cpp',
+    'mongo/platform/strnlen.cpp',
+    'mongo/util/assert_util.cpp',
+    'mongo/util/background.cpp',
+    'mongo/util/base64.cpp',
+    'mongo/util/concurrency/synchronization.cpp',
+    'mongo/util/fail_point.cpp',
+    'mongo/util/fail_point_registry.cpp',
+    'mongo/util/fail_point_service.cpp',
+    'mongo/util/hex.cpp',
+    'mongo/util/log.cpp',
+    'mongo/util/md5.cpp',
+    'mongo/util/net/hostandport.cpp',
+    'mongo/util/net/message.cpp',
+    'mongo/util/net/message_port.cpp',
+    'mongo/util/net/sock.cpp',
+    'mongo/util/net/socket_poll.cpp',
+    'mongo/util/net/ssl_manager.cpp',
+    'mongo/util/password_digest.cpp',
+    'mongo/util/stringutils.cpp',
+    'mongo/util/text.cpp',
+    'mongo/util/time_support.cpp',
+    'mongo/util/timer.cpp',
+    'third_party/murmurhash3/MurmurHash3.cpp',
+    ]
+
+# polyfills for platforms that don't have certain system provided functions
+clientSourceTz = [] if (clientEnv['MONGO_HAVE_TIMEGM'] or windows) else ['third_party/tz/timegm.c']
+
+clientSourceSSL = [
+    'mongo/client/native_sasl_client_session.cpp',
+    'mongo/client/sasl_client_authenticate_impl.cpp',
+    'mongo/client/sasl_client_conversation.cpp',
+    'mongo/client/sasl_client_session.cpp',
+    'mongo/client/sasl_plain_client_conversation.cpp',
+    'mongo/client/sasl_scramsha1_client_conversation.cpp',
+    'mongo/crypto/crypto_openssl.cpp',
+    'mongo/crypto/mechanism_scram.cpp',
+]
+
+clientSourceSasl = [
+    'mongo/client/cyrus_sasl_client_session.cpp',
+    'mongo/client/sasl_sspi.cpp',
+]
+
+clientSource = clientSourceBasic + clientSourceTz
+
+usingSsl = libEnv['MONGO_SSL']
+if usingSsl:
+    clientSource += clientSourceSSL
+
+
+usingSasl = libEnv['MONGO_SASL']
+if usingSasl:
+    clientSource += clientSourceSasl
+
+exampleSourceMap = [
+    ('aggregation', 'mongo/client/examples/aggregation.cpp'),
+    ('arrayExample', 'mongo/client/examples/arrayExample.cpp'),
+    ('authTest', 'mongo/client/examples/authTest.cpp'),
+    ('initializeTest', 'mongo/client/examples/initializeTest.cpp'),
+    ('loggingTest', 'mongo/client/examples/loggingTest.cpp'),
+    ('clientTest', 'mongo/client/examples/clientTest.cpp'),
+    ('firstExample', 'mongo/client/examples/first.cpp'),
+    ('geojsonExample', 'mongo/client/examples/geojson_demo.cpp'),
+    ('insertDemo', 'mongo/client/examples/insert_demo.cpp'),
+    ('rsExample', 'mongo/client/examples/rs.cpp'),
+    ('secondExample', 'mongo/client/examples/second.cpp'),
+    ('simpleClientDemo', 'mongo/client/examples/simple_client_demo.cpp'),
+    ('tutorial', 'mongo/client/examples/tutorial.cpp'),
+    ('whereExample', 'mongo/client/examples/whereExample.cpp'),
+    ('bsondemo', 'mongo/bson/bsondemo/bsondemo.cpp'),
+]
+
+clientHeaders = [
+    'mongo/base/data_cursor.h',
+    'mongo/base/data_view.h',
+    'mongo/base/disallow_copying.h',
+    'mongo/base/encoded_value_storage.h',
+    'mongo/base/error_codes.h',
+    'mongo/base/parse_number.h',
+    'mongo/base/status-inl.h',
+    'mongo/base/status.h',
+    'mongo/base/status_with.h',
+    'mongo/base/string_data-inl.h',
+    'mongo/base/string_data.h',
+    'mongo/bson/bson-inl.h',
+    'mongo/bson/bson.h',
+    'mongo/bson/bson_db.h',
+    'mongo/bson/bson_field.h',
+    'mongo/bson/bsonelement.h',
+    'mongo/bson/bsonmisc.h',
+    'mongo/bson/bsonobj.h',
+    'mongo/bson/bsonobjbuilder.h',
+    'mongo/bson/bsonobjiterator.h',
+    'mongo/bson/bsontypes.h',
+    'mongo/bson/inline_decls.h',
+    'mongo/bson/oid.h',
+    'mongo/bson/ordering.h',
+    'mongo/bson/timestamp.h',
+    'mongo/bson/util/builder.h',
+    'mongo/client/autolib.h',
+    'mongo/client/bulk_operation_builder.h',
+    'mongo/client/bulk_update_builder.h',
+    'mongo/client/bulk_upsert_builder.h',
+    'mongo/client/dbclient.h',
+    'mongo/client/dbclient_rs.h',
+    'mongo/client/dbclientcursor.h',
+    'mongo/client/dbclientinterface.h',
+    'mongo/client/exceptions.h',
+    'mongo/client/export_macros.h',
+    'mongo/client/gridfs.h',
+    'mongo/client/index_spec.h',
+    'mongo/client/init.h',
+    'mongo/client/options.h',
+    'mongo/client/redef_macros.h',
+    'mongo/client/sasl_client_authenticate.h',
+    'mongo/client/undef_macros.h',
+    'mongo/client/write_concern.h',
+    'mongo/client/write_options.h',
+    'mongo/client/write_result.h',
+    'mongo/config.h',
+    'mongo/db/jsobj.h',
+    'mongo/db/json.h',
+    'mongo/geo/boundingbox.h',
+    'mongo/geo/constants.h',
+    'mongo/geo/coordinates.h',
+    'mongo/geo/coordinates2d.h',
+    'mongo/geo/coordinates2dgeographic.h',
+    'mongo/geo/geometry.h',
+    'mongo/geo/geometrycollection.h',
+    'mongo/geo/geoobj.h',
+    'mongo/geo/interface.h',
+    'mongo/geo/linestring.h',
+    'mongo/geo/multilinestring.h',
+    'mongo/geo/multipoint.h',
+    'mongo/geo/multipolygon.h',
+    'mongo/geo/namespaces.h',
+    'mongo/geo/parser-impl.h',
+    'mongo/geo/parser.h',
+    'mongo/geo/point.h',
+    'mongo/geo/polygon.h',
+    'mongo/geo/queryutils.h',
+    'mongo/logger/appender.h',
+    'mongo/logger/component_message_log_domain.h',
+    'mongo/logger/labeled_level.h',
+    'mongo/logger/log_component.h',
+    'mongo/logger/log_component_settings.h',
+    'mongo/logger/log_domain.h',
+    'mongo/logger/log_manager.h',
+    'mongo/logger/log_severity-inl.h',
+    'mongo/logger/log_severity.h',
+    'mongo/logger/logger.h',
+    'mongo/logger/logstream_builder.h',
+    'mongo/logger/message_event.h',
+    'mongo/logger/message_log_domain.h',
+    'mongo/platform/atomic_intrinsics.h',
+    'mongo/platform/atomic_intrinsics_gcc_atomic.h',
+    'mongo/platform/atomic_intrinsics_gcc_intel.h',
+    'mongo/platform/atomic_intrinsics_gcc_sync.h',
+    'mongo/platform/atomic_intrinsics_win32.h',
+    'mongo/platform/atomic_word.h',
+    'mongo/platform/atomic_word_cxx11.h',
+    'mongo/platform/atomic_word_intrinsics.h',
+    'mongo/platform/compiler.h',
+    'mongo/platform/compiler_gcc.h',
+    'mongo/platform/compiler_msvc.h',
+    'mongo/platform/cstdint.h',
+    'mongo/platform/endian.h',
+    'mongo/platform/float_utils.h',
+    'mongo/platform/hash_namespace.h',
+    'mongo/platform/strnlen.h',
+    'mongo/platform/unordered_map.h',
+    'mongo/platform/windows_basic.h',
+    'mongo/stdx/functional.h',
+    'mongo/util/assert_util.h',
+    'mongo/util/mongoutils/str.h',
+    'mongo/util/net/hostandport.h',
+    'mongo/util/net/message.h',
+    'mongo/util/net/message_port.h',
+    'mongo/util/net/operation.h',
+    'mongo/util/net/sock.h',
+    'mongo/util/shared_buffer.h',
+    'mongo/util/time_support.h',
+    'mongo/version.h',
+]
+
+mongoClientLibs = []
+
+if usingSasl:
+    mongoClientLibs += ["sasl2"]
+    if windows:
+        mongoClientLibs += ["secur32"]
+
+mongoClientPrefixInstalls = []
+
+staticLibEnv = libEnv.Clone()
+staticLibEnv.AppendUnique(
+    CPPDEFINES=['STATIC_LIBMONGOCLIENT'],
+    LIBS=mongoClientLibs,
+)
+
+sharedLibName = 'mongoclient'
+staticLibName = 'mongoclient'
+
+if windows:
+    # On Windows, we need to have the static library target and the
+    # import library target have different names, so that they aren't
+    # ambiguous to scons.  Boost names the static library libxxxx.lib and
+    # the import library xxxx.lib, so we shall follow their lead.
+    staticLibName = 'libmongoclient'
+
+    abi_adornment=str()
+    if not has_option('dynamic-windows'):
+        abi_adornment += 's'
+
+    if get_option('dbg') == 'on':
+        abi_adornment += 'gd'
+
+    if abi_adornment:
+        abi_adornment = '-' + abi_adornment
+        sharedLibName = sharedLibName + abi_adornment
+        staticLibName = staticLibName + abi_adornment
+
+mongoClientStaticLib = staticLibEnv.StaticLibrary(
+    staticLibName, clientSource),
+
+libEnv.Alias('driver', mongoClientStaticLib)
+
+mongoClientPrefixInstalls.append(libEnv.Install("$INSTALL_DIR/lib", mongoClientStaticLib))
+
+# Other things like tests need to link against the static library (and the deps of that static
+# lib) so export it so it can be easily referenced.
+Export({'mongoClientStaticLibs' : [mongoClientStaticLib] + mongoClientLibs})
+
+mongoClientSharedLib = None
+
+if buildShared:
+
+    # TODO: When we are ready to set a SONAME for mongoclient, set SHLIBVERSION=x.y.z in this
+    # environment to enable SCons versioned shared library support, and then change the two
+    # 'Install' calls in this block to 'InstallVersionedLibrary'. SHLIBVERSION and
+    # InstallVersionedLibrary support is only stable in SCons > 2.3.0, so if you add support
+    # here, be sure to add an EnsuredSconsVersion here as well.
+    sharedLibEnv = libEnv.Clone()
+
+    sharedLibEnv.AppendUnique(LIBS=mongoClientLibs)
+
+    if linux and not has_option('sanitize'):
+        sharedLibEnv.AppendUnique(SHLINKFLAGS=["-Wl,--as-needed", "-Wl,-zdefs"])
+
+    # On non-windows systems, we want to match the behavior of DLLs and not export all symbols
+    # from the dynamic shared library unless they have been explicitly been marked.
+    if not windows:
+        sharedLibEnv.AppendUnique(CCFLAGS="-fvisibility=hidden")
+        sharedLibEnv.AppendUnique(SHLINKFLAGS="-fvisibility=hidden")
+
+    mongoClientSharedLib = sharedLibEnv.SharedLibrary(sharedLibName, clientSource)
+    libEnv.Alias('driver', mongoClientSharedLib)
+
+    if darwin:
+        # Set up the copy of the client library we will link targets against so that those
+        # targets record the relative target directory as the install_name.
+        sharedLibEnv.AddPostAction(
+            mongoClientSharedLib,
+            "install_name_tool -id @rpath/lib/%s %s" % (
+                mongoClientSharedLib[0],
+                mongoClientSharedLib[0].abspath
+            ))
+
+    mongoClientSharedLibPrefixInstall = sharedLibEnv.Install(
+        '$INSTALL_DIR/lib', mongoClientSharedLib)
+    if darwin:
+        sharedLibEnv.AddPostAction(
+            mongoClientSharedLibPrefixInstall,
+            "install_name_tool -id %s %s" % (
+                mongoClientSharedLibPrefixInstall[0],
+                mongoClientSharedLibPrefixInstall[0]
+            ))
+    mongoClientPrefixInstalls.append(mongoClientSharedLibPrefixInstall)
+
+inst = libEnv.InstallAs(['$INSTALL_DIR/include/' + x for x in clientHeaders], clientHeaders)
+libEnv.AddPostAction(inst, Chmod('$TARGET', 0644))
+mongoClientPrefixInstalls.append(inst);
+
+
+installAlias = libEnv.Alias('install', mongoClientPrefixInstalls)
+
+# Build some simple mainlines that include the dbclient.h and bson.h headers
+# with things set up to include from the installation directory.
+
+# Remove anything that says $VARIANT_DIR from the CPPPATH, except for things in third party,
+# so we have a source for boost, etc if we aren't getting them from the system.
+limit_cpppath=[p for p in libEnv['CPPPATH']
+               if not ('$VARIANT_DIR' in p and not 'third_party' in p)]
+
+# Create an environment where include files and libraries come from the installation directory.
+installationTestEnv = libEnv.Clone(
+    CPPPATH=["$INSTALL_DIR/include"] + limit_cpppath,
+    LIBPATH=["$INSTALL_DIR/lib"],
+    CPPDEFINES=['STATIC_LIBMONGOCLIENT'],
+)
+
+include_dbclienth_test_file = 'mongo/client/include_dbclienth_test.cpp'
+libEnv.Depends(include_dbclienth_test_file, installAlias)
+include_dbclienth_test = installationTestEnv.Object(
+    target='include_dbclienth_test',
+    source=[include_dbclienth_test_file])
+libEnv.AlwaysBuild(include_dbclienth_test)
+libEnv.NoCache(include_dbclienth_test)
+
+include_bsonh_test_file = 'mongo/client/include_bsonh_test.cpp'
+libEnv.Depends(include_bsonh_test_file, installAlias)
+include_bsonh_test = installationTestEnv.Object(
+    target='include_bsonh_test',
+    source=[include_bsonh_test_file])
+libEnv.AlwaysBuild(include_bsonh_test)
+libEnv.NoCache(include_bsonh_test)
+
+libEnv.Alias('check-install', [
+    include_dbclienth_test,
+    include_bsonh_test,
+])
+
+staticClientEnv = clientEnv.Clone()
+
+# On windows, we rely on autolib linking, so need to set a search path to the root of the build
+# dir where the .lib will go. On others, we just add the library to libs.
+if windows:
+    staticClientEnv.PrependUnique(LIBPATH=['$VARIANT_DIR'])
+else:
+    staticClientEnv.PrependUnique(LIBS=[mongoClientStaticLib])
+
+# Pull in the libs that the static client depends on.
+staticClientEnv.AppendUnique(LIBS=mongoClientLibs)
+
+staticClientEnv.AppendUnique(CPPDEFINES=['STATIC_LIBMONGOCLIENT'])
+
+# Build each statically linked client program
+staticClientPrograms = [
+    staticClientEnv.Program(target, source) for (target, source) in exampleSourceMap
+]
+
+# For autolib'ing, we need this to create the dependency edge
+if windows:
+    staticClientEnv.Depends(staticClientPrograms, mongoClientStaticLib)
+
+# Install path for the examples. On non-windows, do something reasonable to not pollute
+# $INSTALL_DIR/bin. On windows anything goes, drop the static libs in bin.
+staticClientProgramInstallDir = "$INSTALL_DIR/share/mongo-cxx-driver/examples/static"
+if windows:
+    staticClientProgramInstallDir = "$INSTALL_DIR/bin/examples/static"
+
+staticClientProgramInstalls = staticClientEnv.Install(
+    staticClientProgramInstallDir,
+    staticClientPrograms)
+
+# Do the same for the shared library case, if we are doing that.
+sharedClientPrograms = []
+sharedClientProgramInstalls = []
+if buildShared:
+    sharedClientEnv = clientEnv.Clone()
+
+    # On windows, we rely on autolib linking, so add the variant directory (where the .lib will
+    # land) to the search path. Otherwise, just link directly to the binary.
+    if windows:
+        sharedClientEnv.PrependUnique(
+            LIBPATH=['$VARIANT_DIR']
+        )
+    else:
+        sharedClientEnv.PrependUnique(
+            LIBS=[mongoClientSharedLib],
+        )
+
+    # Pretend that these files are shared object suffixed so they don't conflict with the objects
+    # for the static library.
+    sharedClientEnv['OBJSUFFIX'] = sharedClientEnv['OBJSUFFIX'] + 's'
+
+    # For non-darwin 'nix, just set the RPATH that this program will use
+    # when installed. Note that this must match up with the install directory
+    # set below.
+    if nix:
+        if darwin:
+            sharedClientEnv.PrependUnique(
+                LINKFLAGS="-Wl,-rpath,@loader_path/../../..")
+        else:
+            sharedClientEnv.PrependUnique(
+                LINKFLAGS="-Wl,-z,origin",
+                RPATH=[sharedClientEnv.Literal("\\$$ORIGIN/../../../lib")])
+
+    sharedClientPrograms = [
+        sharedClientEnv.Program(
+            "sharedclient/" + target, source) for (target, source) in exampleSourceMap]
+
+    # Note that this dependency also ensures the correct dependency edge in autolib cases.
+    libEnv.Depends(sharedClientPrograms, mongoClientSharedLib)
+
+    # For normal systems with runpaths, install the examples somewhere sane. Otherwise on
+    # windows, drop them in the lib directory because there really isn't anywher else they can
+    # live where they can find the DLL.
+    sharedClientProgramInstallDir = "$INSTALL_DIR/share/mongo-cxx-driver/examples"
+    if windows:
+        sharedClientProgramInstallDir = "$INSTALL_DIR/lib"
+
+    sharedClientProgramInstalls = sharedClientEnv.Install(
+        sharedClientProgramInstallDir,
+        sharedClientPrograms)
+
+    sharedClientEnv.Depends(sharedClientProgramInstalls, mongoClientSharedLibPrefixInstall)
+
+clientTestPrograms = staticClientPrograms + sharedClientPrograms
+clientEnv.Alias('build-examples', clientTestPrograms)
+
+clientTestProgramInstalls = staticClientProgramInstalls + sharedClientProgramInstalls
+
+# TODO: Make this more Scons-like with an action target that causes
+# a server to come into being and then have each test depend on it.
+orchestration_uri = "%s:%s" % (clientEnv.GetOption("mongo-orchestration-host"),
+                               clientEnv.GetOption("mongo-orchestration-port"))
+json_headers = { "Content-Type": "application/json" }
+
+params = json.dumps({
+    "id": "standalone",
+    "name": "mongod",
+    "preset": clientEnv.GetOption("mongo-orchestration-preset")
+})
+
+# Check if a standalone mongod is already up, resetting if it is
+MO_MAX_RETRIES = 10
+for attempt in range(1, MO_MAX_RETRIES+1):
+
+    if attempt > 1:
+        # don't sleep before first attempt
+        time.sleep(1)
+
+    try:
+        conn = httplib.HTTPConnection(orchestration_uri, timeout=30)
+        conn.request("GET", "/servers/standalone", headers=json_headers)
+        response = conn.getresponse()
+        message = response.read()
+
+    except IOError:
+        print("Cannot connect to Mongo Orchestration at %s on attempt %d. %d attempts remaining..."
+              % (orchestration_uri, attempt, MO_MAX_RETRIES - (attempt)))
+        continue
+
+    if (response.status == 404):
+        print("No standalone started, starting one now...")
+        post_conn = httplib.HTTPConnection(orchestration_uri, timeout=30)
+        post_conn.request("POST", "/servers", params, json_headers)
+        continue
+    elif (response.status/100 != 2):
+        print("Mongo Orchestration had an error with code %s" % response.status)
+        if message:
+            print("\tmessage from MO: %s", message)
+        continue
+
+    # Grab the port from the response -- use it in the tests
+    decoded_response = json.loads(message)
+    mongodb_uri = decoded_response['mongodb_uri']
+
+    for clientTest in clientTestProgramInstalls:
+
+        # On windows, the installs also install PDB files, which we end up picking up.
+        # Obviously, we can't run those, so filter them out. Lets hope nobody creates
+        # a new client test with pdb in the name.
+        if clientTest.abspath.endswith('.pdb'):
+            continue
+
+        # the rsExample test needs a replica set to talk to. The old smokeClient never tested it
+        # The old smoke subsystem did test authTest, not sure why it isn't working now.
+        if 'rsExample' in clientTest.abspath:
+            continue
+
+        clientEnv.AlwaysBuild(
+            clientEnv.Alias(
+                'examples',
+                [clientTest],
+                "%s %s" % (clientTest.abspath, mongodb_uri)
+            )
+        )
+
+    # The last attempt succeeded so we don't need to keep trying
+    break
+
+clientEnv.Alias('install-examples', clientTestProgramInstalls)
