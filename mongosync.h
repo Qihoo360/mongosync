@@ -43,22 +43,25 @@ struct OplogTime {
 
 struct Options {
 	Options()
-    : oplog(false),
+    : src_use_mcr(false),
+		dst_use_mcr(false),
+		oplog(false),
     raw_oplog(false),
     dst_oplog_ns("sync.oplog"),
-    no_index(false),
-		use_mcr(false) {
+    no_index(false) {
    }
 
 	std::string src_ip_port;
 	std::string src_user;
 	std::string src_passwd;
 	std::string src_auth_db;
+	bool src_use_mcr;
 
 	std::string dst_ip_port;
 	std::string dst_user;
 	std::string dst_passwd;
 	std::string dst_auth_db;
+	bool dst_use_mcr;
 
 //the database or collection to be transfered	
 	std::string db;
@@ -76,7 +79,6 @@ struct Options {
 	bool no_index;
 	mongo::Query filter;
 
-	bool use_mcr;
 };
 
 class NamespaceString {
@@ -122,6 +124,7 @@ void ParseOptions(int argc, char** argv, Options* opt);
 class MongoSync {
 public:
 	static MongoSync* NewMongoSync(const Options& opt);
+	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr);
 	MongoSync(const Options& opt);
 	~MongoSync();
 	int32_t InitConn();
@@ -146,14 +149,13 @@ private:
 	const static std::string oplog_ns_;
 
   //backgroud thread for Batch write
-  util::BGThread bg_thread_; 
+  util::BGThreadGroup bg_thread_group_; 
 
 	void CloneCollIndex(std::string sns, std::string dns);
 	void GenericProcessOplog(OplogProcessOp op);
 	void ProcessSingleOplog(const std::string& db, const std::string& coll, std::string& dst_db, std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op);
 	void ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog);
 	void ApplyCmdOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_coll = true);
-	mongo::DBClientConnection* ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd, bool use_mcr);
 	OplogTime GetSideOplogTime(mongo::DBClientConnection* conn, std::string ns, std::string db, std::string coll, bool first_or_last); //first_or_last==true->get the first timestamp; first_or_last==false->get the last timestamp
 
 	std::string GetMongoVersion(mongo::DBClientConnection* conn);

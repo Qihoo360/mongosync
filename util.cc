@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "util.h"
+#include "mongosync.h"
 
 namespace util {
 
@@ -20,44 +21,58 @@ std::string Int2Str(int64_t num) {
   return buf;
 }
 
-BGThread::BGThread()
-  :tid_(0), 
-  running_(false), 
-  should_exit_(false) {
+BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr)
+  :srv_ip_port_(srv_ip_port),
+	auth_db_(auth_db),
+	user_(user),
+	passwd_(passwd),
+	running_(false), 
+  should_exit_(false),
+	use_mcr_(use_mcr) {
 
   pthread_mutex_init(&mlock_, NULL);
   pthread_cond_init(&clock_, NULL);
 
 }
 
-BGThread::~BGThread() {
-  if (tid_) {
-    should_exit_ = true;
-    pthread_cond_signal(&clock_);
-    pthread_join(tid_, NULL);
-  }
+BGThreadGroup::~BGThreadGroup() {
+	should_exit_ = true;
+	pthread_cond_broadcast(&clock_);
+	for (std::vector<pthread_t>::const_iterator iter = tids_.begin();
+			iter != tids_.end();
+			++iter) {
+		pthread_join(*iter, NULL);
+	}
 
   pthread_mutex_destroy(&mlock_);
   pthread_cond_destroy(&clock_);
 }
 
-void BGThread::StartThreadIfNeed() {
+void BGThreadGroup::StartThreadsIfNeed() {
   if (running_) {
     return;
   }
 
-  if (pthread_create(&tid_, NULL, BGThread::Run, this) != -1) {
-    running_ = true;
-  } else {
-    std::cerr << "BGThread start error" << std::endl;
-  }
+	pthread_t tid;
+	for (int idx = 0; idx != BG_THREAD_NUM; ++idx) {
+  	if (pthread_create(&tid, NULL, BGThreadGroup::Run, this) != -1) {
+  	  tids_.push_back(tid);
+  	  std::cerr << "BGThread: " << idx << " starts success!" << std::endl;
+  	} else {
+  	  std::cerr << "BGThread: " << idx << " starts error!" << std::endl;
+  	}
+	}
+	if (tids_.empty()) {
+		std::cerr << "BGThreadGroup all start fail!" << std::endl;
+		exit(-1);	
+	}
+	running_ = true;	
 }
 
-void BGThread::AddWriteUnit(mongo::DBClientConnection *conn, const std::string &ns, WriteBatch *batch) {
-  StartThreadIfNeed();
+void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
+  StartThreadsIfNeed();
 
   WriteUnit unit;
-  unit.conn = conn;
   unit.ns = ns;
   unit.batch = batch;
 
@@ -75,35 +90,40 @@ void BGThread::AddWriteUnit(mongo::DBClientConnection *conn, const std::string &
 }
 
 
-void *BGThread::Run(void *arg) {
-  BGThread *thread_ptr = reinterpret_cast<BGThread *>(arg);
+void *BGThreadGroup::Run(void *arg) {
+  BGThreadGroup *thread_ptr = reinterpret_cast<BGThreadGroup *>(arg);
+	mongo::DBClientConnection *conn = MongoSync::ConnectAndAuth(thread_ptr->srv_ip_port(), thread_ptr->auth_db(), thread_ptr->user(), thread_ptr->passwd(), thread_ptr->use_mcr());
+	if (!conn) {
+		return NULL;
+	}
+
   std::queue<WriteUnit> *queue_p = thread_ptr->write_queue_p();
   pthread_mutex_t *queue_mutex_p = thread_ptr->mlock_p();
   pthread_cond_t *queue_cond_p = thread_ptr->clock_p();
   WriteUnit unit;
-
-  pthread_mutex_lock(queue_mutex_p);
+	
 
   while (!thread_ptr->should_exit()) {
 
+  	pthread_mutex_lock(queue_mutex_p);
     while (queue_p->empty() && !thread_ptr->should_exit()) {
       pthread_cond_wait(queue_cond_p, queue_mutex_p);
     }
     
     if (thread_ptr->should_exit()) {
+  		pthread_mutex_unlock(queue_mutex_p);
       break;
     }
 
     unit = queue_p->front();
-    pthread_mutex_unlock(queue_mutex_p);
-//    unit.conn->insert(unit.ns, unit.batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
-    unit.conn->insert(unit.ns, *(unit.batch), mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
-    delete unit.batch;
-    pthread_mutex_lock(queue_mutex_p);
     queue_p->pop();
+    pthread_mutex_unlock(queue_mutex_p);
+
+    conn->insert(unit.ns, *(unit.batch), mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
+    delete unit.batch;
   }
 
-  pthread_mutex_unlock(queue_mutex_p);
+	delete conn;
   return NULL;
 }
 

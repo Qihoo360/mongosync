@@ -11,24 +11,27 @@
 
 namespace util {
 
+uint64_t Microtime();
+std::string Int2Str(int64_t num);
+
+
+/*************************************************************************************************/
 typedef std::vector<mongo::BSONObj> WriteBatch;
 typedef struct {
   std::string ns;
   WriteBatch *batch;
-  mongo::DBClientConnection *conn;
 } WriteUnit;
 
-uint64_t Microtime();
-std::string Int2Str(int64_t num);
 
-class BGThread {
+class BGThreadGroup { //This BGThreadGroup is only used for batch write
 
 #define MAX_LAG_NUM 5
+#define BG_THREAD_NUM 5
 public:
-  BGThread();
-  ~BGThread();
+  BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db = "", const std::string &user = "", const std::string &passwd = "", const bool use_mcr = false);
+  ~BGThreadGroup();
 
-  void AddWriteUnit(mongo::DBClientConnection *conn, const std::string &ns, WriteBatch *unit);
+  void AddWriteUnit(const std::string &ns, WriteBatch *unit);
 
   bool should_exit() {
     return should_exit_;
@@ -46,14 +49,39 @@ public:
     return &mlock_;
   }
 
+	const std::string &srv_ip_port() const {
+		return srv_ip_port_; 
+	}
+
+	const std::string &auth_db() const {
+		return auth_db_;
+	}
+
+	const std::string &user() const {
+		return user_;
+	}
+
+	const std::string &passwd() const {
+		return passwd_;
+	}
+
+	bool use_mcr() const {
+		return use_mcr_;
+	} 
+
 private:
-  void StartThreadIfNeed();
+  void StartThreadsIfNeed();
   static void *Run(void *arg);
 
-  pthread_t tid_;
-  bool running_;
- 
-  bool should_exit_;
+	std::vector<pthread_t> tids_;
+  bool running_; 
+  bool should_exit_; //TODO: maybe needs protected, but here temporally
+
+	std::string srv_ip_port_;
+	std::string auth_db_;
+	std::string user_;
+	std::string passwd_;
+	bool use_mcr_;
 
   pthread_cond_t clock_;
   pthread_mutex_t mlock_;

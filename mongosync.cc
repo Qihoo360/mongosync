@@ -32,10 +32,12 @@ static void Usage() {
 	std::cerr << "--src_user arg           the source mongodb server's logging user" << std::endl;
 	std::cerr << "--src_passwd arg         the source mongodb server's logging password" << std::endl;
 	std::cerr << "--src_auth_db arg        the source mongodb server's auth db" << std::endl;
+	std::cerr << "--src_use_mcr            force source connection to use MONGODB-CR password machenism" << std::endl;
 	std::cerr << "--dst_srv arg            the destination mongodb server's ip port" << std::endl;
 	std::cerr << "--dst_user arg           the destination mongodb server's logging user" << std::endl;
 	std::cerr << "--dst_passwd arg         the destination mongodb server's logging password" << std::endl;
 	std::cerr << "--dst_auth_db arg        the destination mongodb server's auth db" << std::endl;
+	std::cerr << "--dst_use_mcr            force destination connection to use MONGODB-CR password machenism" << std::endl;
 	std::cerr << "--db arg                 the source database to be cloned" << std::endl;
 	std::cerr << "--dst_db arg             the destination database" << std::endl;
 	std::cerr << "--coll arg               the source collection to be cloned" << std::endl;
@@ -47,7 +49,6 @@ static void Usage() {
 	std::cerr << "--dst_op_ns arg          the destination namespace for raw oplog mode" << std::endl;
 	std::cerr << "--no_index               whether to clone the db or collection corresponding index" << std::endl;
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
-	std::cerr << "--use_mcr                force use MONGODB-CR password machenism" << std::endl;
 }
 
 void ParseOptions(int argc, char** argv, Options* opt) {
@@ -66,6 +67,8 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 			opt->src_passwd = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_auth_db") == 0) {
 			opt->src_auth_db = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--src_use_mcr") == 0) {
+			opt->src_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
 			opt->dst_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_user") == 0) {
@@ -76,6 +79,8 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 			opt->dst_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
 			opt->dst_ip_port = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--dst_use_mcr") == 0) {
+			opt->dst_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--db") == 0) {
 			opt->db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_db") == 0) {
@@ -104,8 +109,6 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 			opt->no_index = true;
 		} else if (strcasecmp(argv[idx], "--filter") == 0) {
 			opt->filter = mongo::Query(argv[++idx]);
-		} else if (strcasecmp(argv[idx], "--use_mcr") == 0) {
-			opt->use_mcr = true;
 		} else {
 			std::cerr << "Unkown options" << std::endl;
 			Usage();
@@ -118,8 +121,14 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 MongoSync::MongoSync(const Options& opt) 
 	: opt_(opt),
 	src_conn_(NULL),
-	dst_conn_(NULL) {	
+	dst_conn_(NULL),
+	bg_thread_group_(opt.dst_ip_port,
+			             opt.dst_auth_db,
+									 opt.dst_user,
+									 opt.dst_passwd,
+									 opt.dst_use_mcr) {
 }
+
 
 MongoSync::~MongoSync() {
 	if (src_conn_) {
@@ -139,17 +148,7 @@ MongoSync* MongoSync::NewMongoSync(const Options& opt) {
 	return mongosync;
 }
 
-int32_t MongoSync::InitConn() {
-	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port, opt_.src_auth_db, opt_.src_user, opt_.src_passwd, opt_.use_mcr))
-			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_auth_db, opt_.dst_user, opt_.dst_passwd, opt_.use_mcr))) {
-		return -1;	
-	}
-	src_version_ = GetMongoVersion(src_conn_);
-	dst_version_ = GetMongoVersion(dst_conn_);
-	return 0;
-}
-
-mongo::DBClientConnection* MongoSync::ConnectAndAuth(std::string srv_ip_port, std::string auth_db, std::string user, std::string passwd, bool use_mcr) {
+mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr) {
 	std::string errmsg;
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
@@ -167,6 +166,16 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(std::string srv_ip_port, st
 		std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
 	}
 	return conn;
+}
+
+int32_t MongoSync::InitConn() {
+	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port, opt_.src_auth_db, opt_.src_user, opt_.src_passwd, opt_.src_use_mcr))
+			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_auth_db, opt_.dst_user, opt_.dst_passwd, opt_.dst_use_mcr))) {
+		return -1;	
+	}
+	src_version_ = GetMongoVersion(src_conn_);
+	dst_version_ = GetMongoVersion(dst_conn_);
+	return 0;
 }
 
 void MongoSync::Process() {
@@ -272,7 +281,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 		batch->push_back(obj.getOwned());
 		if (acc_size >= batch_size) {
 //			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
-      bg_thread_.AddWriteUnit(dst_conn_, dst_ns, batch);
+      bg_thread_group_.AddWriteUnit(dst_ns, batch);
 //			batch.clear();
       batch = new std::vector<mongo::BSONObj>;
 			acc_size = 0;
@@ -287,10 +296,10 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	}
 	if (!batch->empty()) {
 //		dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
-    bg_thread_.AddWriteUnit(dst_conn_, dst_ns, batch);
+    bg_thread_group_.AddWriteUnit(dst_ns, batch);
 	}
 
-  while (!bg_thread_.write_queue_p()->empty()) {
+  while (!bg_thread_group_.write_queue_p()->empty()) {
     sleep(1);
   }
 
