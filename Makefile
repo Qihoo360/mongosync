@@ -1,6 +1,6 @@
 CXX = g++
-# CXXFLAGS = -O0 -g
-CXXFLAGS = -O2 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -gdwarf-2 -Wno-unused-variable
+CXXFLAGS = -O0 -g
+# CXXFLAGS = -O0 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -gdwarf-2 -Wno-unused-variable
 
 OBJECT = mongosync
 OUTPUT = ./output
@@ -41,7 +41,7 @@ mongosync: $(DRIVER_LIB) $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(DRIVER_LIB) $(INCLUDE_PATH) $(LIB_PATH) $(LIBS)
 
 $(DRIVER_LIB):
-	scons -C $(DRIVER_DIR) install
+	scons -C $(DRIVER_DIR) --ssl install
 
 $(OBJS): %.o : %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@ $(INCLUDE_PATH) 
