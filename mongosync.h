@@ -79,6 +79,14 @@ struct Options {
 	bool no_index;
 	mongo::Query filter;
 
+  void ParseCommand(int argc, char** argv);
+  void LoadConf(const std::string &conf_file);
+private:
+  std::map<std::string, std::string> items_;
+  bool GetConfBool(const std::string &item_key, bool *value);
+  bool GetConfStr(const std::string &item_key, std::string *value);
+  bool GetConfQuery(const std::string &item_key, mongo::Query *value);
+  bool GetConfOplogTime(const std::string &item_key, OplogTime *value);
 };
 
 class NamespaceString {
@@ -119,12 +127,11 @@ private:
 		size_t dot_index_;
 };
 
-void ParseOptions(int argc, char** argv, Options* opt);
 
 class MongoSync {
 public:
 	static MongoSync* NewMongoSync(const Options& opt);
-	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr);
+	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const bool bg = false);
 	MongoSync(const Options& opt);
 	~MongoSync();
 	int32_t InitConn();

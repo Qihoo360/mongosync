@@ -21,6 +21,18 @@ std::string Int2Str(int64_t num) {
   return buf;
 }
 
+std::string Trim(const std::string &str, const std::string del_str) {
+  std::string::size_type begin, end;
+  std::string ret;
+  if ((begin = str.find_first_not_of(del_str)) == std::string::npos) {
+    return ret;
+  }
+  end = str.find_last_not_of(del_str);
+  return str.substr(begin, end-begin+1);
+}
+
+/*******************************************************************************************/
+
 BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr)
   :srv_ip_port_(srv_ip_port),
 	auth_db_(auth_db),
@@ -57,7 +69,7 @@ void BGThreadGroup::StartThreadsIfNeed() {
 	for (int idx = 0; idx != BG_THREAD_NUM; ++idx) {
   	if (pthread_create(&tid, NULL, BGThreadGroup::Run, this) != -1) {
   	  tids_.push_back(tid);
-  	  std::cerr << "BGThread: " << idx << " starts success!" << std::endl;
+//  	  std::cerr << "BGThread: " << idx << " starts success!" << std::endl;
   	} else {
   	  std::cerr << "BGThread: " << idx << " starts error!" << std::endl;
   	}
@@ -92,7 +104,7 @@ void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
 
 void *BGThreadGroup::Run(void *arg) {
   BGThreadGroup *thread_ptr = reinterpret_cast<BGThreadGroup *>(arg);
-	mongo::DBClientConnection *conn = MongoSync::ConnectAndAuth(thread_ptr->srv_ip_port(), thread_ptr->auth_db(), thread_ptr->user(), thread_ptr->passwd(), thread_ptr->use_mcr());
+	mongo::DBClientConnection *conn = MongoSync::ConnectAndAuth(thread_ptr->srv_ip_port(), thread_ptr->auth_db(), thread_ptr->user(), thread_ptr->passwd(), thread_ptr->use_mcr(), true);
 	if (!conn) {
 		return NULL;
 	}

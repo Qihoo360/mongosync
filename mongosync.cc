@@ -1,15 +1,16 @@
-#include "mongosync.h"
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <algorithm>
-#include <string.h>
 #include <string>
 
+#include <string.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "util.h"
+#include "mongosync.h"
 #include "mongo/util/mongoutils/str.h"
 
 static void GetSeparateArgs(const std::string& raw_str, std::vector<std::string>* argv_p) {
@@ -28,6 +29,7 @@ static bool before(const OplogTime& t1, const OplogTime& t2) {
 static void Usage() {
 	std::cerr << "Follow is the mongosync-surpported options: " << std::endl;	
 	std::cerr << "--help                   to get the help message" << std::endl;
+  std::cerr << "-c conf.file             use config file to start mongosync" << std::endl;
 	std::cerr << "--src_srv arg            the source mongodb server's ip port" << std::endl;
 	std::cerr << "--src_user arg           the source mongodb server's logging user" << std::endl;
 	std::cerr << "--src_passwd arg         the source mongodb server's logging password" << std::endl;
@@ -51,7 +53,7 @@ static void Usage() {
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
 }
 
-void ParseOptions(int argc, char** argv, Options* opt) {
+void Options::ParseCommand(int argc, char** argv) {
 	int32_t idx = 1;
 	std::string time_str;
 	int32_t commas_pos;
@@ -60,55 +62,53 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 			Usage();
 			exit(0);
 		} else if (strcasecmp(argv[idx], "--src_srv") == 0) {
-			opt->src_ip_port = argv[++idx];
+			src_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_user") == 0) {
-			opt->src_user = argv[++idx];
+			src_user = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_passwd") == 0) {
-			opt->src_passwd = argv[++idx];
+			src_passwd = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_auth_db") == 0) {
-			opt->src_auth_db = argv[++idx];
+			src_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_use_mcr") == 0) {
-			opt->src_use_mcr = true;
+			src_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
-			opt->dst_ip_port = argv[++idx];
+			dst_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_user") == 0) {
-			opt->dst_user = argv[++idx];
+			dst_user = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_passwd") == 0) {
-			opt->dst_passwd = argv[++idx];
+			dst_passwd = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_auth_db") == 0) {
-			opt->dst_auth_db = argv[++idx];
-		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
-			opt->dst_ip_port = argv[++idx];
+			dst_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_use_mcr") == 0) {
-			opt->dst_use_mcr = true;
+			dst_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--db") == 0) {
-			opt->db = argv[++idx];
+			db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_db") == 0) {
-			opt->dst_db = argv[++idx];
+			dst_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--coll") == 0) {
-			opt->coll = argv[++idx];
+			coll = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_coll") == 0) {
-			opt->dst_coll = argv[++idx];
+			dst_coll = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--oplog") == 0) {
-			opt->oplog = true;
+			oplog = true;
 		} else if (strcasecmp(argv[idx], "--raw_oplog") == 0) {
-			opt->raw_oplog = true;
+			raw_oplog = true;
 		} else if (strcasecmp(argv[idx], "--op_start") == 0) {
 			time_str = argv[++idx];
 			commas_pos = time_str.find(",");
-			opt->oplog_start.sec = atoi(time_str.substr(0, commas_pos).c_str());
-			opt->oplog_start.no = atoi(time_str.substr(commas_pos+1).c_str());
+			oplog_start.sec = atoi(time_str.substr(0, commas_pos).c_str());
+			oplog_start.no = atoi(time_str.substr(commas_pos+1).c_str());
 		} else if (strcasecmp(argv[idx], "--op_end") == 0) {
 			time_str = argv[++idx];
 			commas_pos = time_str.find(",");
-			opt->oplog_end.sec = atoi(time_str.substr(0, commas_pos).c_str());
-			opt->oplog_end.no = atoi(time_str.substr(commas_pos+1).c_str());
+			oplog_end.sec = atoi(time_str.substr(0, commas_pos).c_str());
+			oplog_end.no = atoi(time_str.substr(commas_pos+1).c_str());
 		} else if (strcasecmp(argv[idx], "--dst_op_ns") == 0) {
-			opt->dst_oplog_ns = argv[++idx];
+			dst_oplog_ns = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--no_index") == 0) {
-			opt->no_index = true;
+			no_index = true;
 		} else if (strcasecmp(argv[idx], "--filter") == 0) {
-			opt->filter = mongo::Query(argv[++idx]);
+			filter = mongo::Query(argv[++idx]);
 		} else {
 			std::cerr << "Unkown options" << std::endl;
 			Usage();
@@ -116,6 +116,110 @@ void ParseOptions(int argc, char** argv, Options* opt) {
 		}
 		++idx;
 	}
+}
+
+void Options::LoadConf(const std::string &conf_file) {
+  std::ifstream in(conf_file.c_str());
+  if (!in.good()) {
+    std::cerr << "cannot open the specified conf file" << std::endl;
+    exit(-1);
+  }
+  std::string line, item_key, item_value;
+  std::string::size_type pos;
+  int32_t line_no;
+  while (!in.eof()) {
+    ++line_no;
+    getline(in, line);
+
+    line = util::Trim(line);
+    if (line.empty() || line.at(0) == '#') {
+      continue;
+    }
+    if ((pos = line.find("=")) == std::string::npos
+        || pos == (line.size() - 1)) {
+      std::cerr << "error item format at " << line_no << "line in " << conf_file << std::endl;
+      continue;
+    }
+
+    item_key = line.substr(0, pos);
+    item_key = util::Trim(item_key);
+    item_value = line.substr(pos + 1);
+    item_value = util::Trim(item_value);
+
+    items_[item_key] = item_value; 
+  }
+  in.close();
+
+  GetConfStr("src_srv", &src_ip_port);
+  GetConfStr("src_user", &src_user);
+  GetConfStr("src_passwd", &src_passwd);
+  GetConfStr("src_auth_db", &src_auth_db);
+  GetConfBool("src_use_mcr", &src_use_mcr);
+  GetConfStr("db", &db);
+  GetConfStr("coll", &coll);
+
+  GetConfStr("dst_srv", &dst_ip_port);
+  GetConfStr("dst_user", &dst_user);
+  GetConfStr("dst_passwd", &dst_passwd);
+  GetConfStr("dst_auth_db", &dst_auth_db);
+  GetConfBool("dst_use_mcr", &dst_use_mcr);
+  GetConfStr("dst_db", &dst_db);
+  GetConfStr("dst_coll", &dst_coll);
+
+  GetConfBool("oplog", &oplog);   
+  GetConfBool("raw_oplog", &raw_oplog);   
+  GetConfOplogTime("op_start", &oplog_start);   
+  GetConfOplogTime("op_end", &oplog_end);
+  GetConfStr("dst_op_ns", &dst_oplog_ns);
+  GetConfBool("no_index", &no_index);
+
+  GetConfQuery("filter", &filter);    
+}
+
+
+#define CHECK_ITEM_EXIST(item_key, iter) \
+  std::map<std::string, std::string>::const_iterator iter; \
+  do { \
+    if ((iter = items_.find(item_key)) == items_.end()) { \
+      return false; \
+    } \
+  } while (false)
+
+bool Options::GetConfBool(const std::string &item_key, bool *value) {
+  CHECK_ITEM_EXIST(item_key, iter);
+  
+  if (strcasecmp(iter->second.c_str(), "on") == 0) {
+    *value = true;
+  } else if (strcasecmp(iter->second.c_str(), "off") == 0) {
+    *value = false;
+  } else {
+    std::cerr << item_key << " item in conf file is not BOOL" << std::endl;
+    return false;
+  }
+  return true;
+}
+
+bool Options::GetConfStr(const std::string &item_key, std::string *value) {
+  CHECK_ITEM_EXIST(item_key, iter);
+  
+  *value = iter->second;
+  return true;
+}
+
+bool Options::GetConfQuery(const std::string &item_key, mongo::Query *value) {
+  CHECK_ITEM_EXIST(item_key, iter);
+  
+  *value = mongo::Query(iter->second);
+  return true;
+}
+
+bool Options::GetConfOplogTime(const std::string &item_key, OplogTime *value) {
+  CHECK_ITEM_EXIST(item_key, iter);
+  
+  std::string::size_type commas_pos = iter->second.find(",");
+  value->sec = atoi(iter->second.substr(0, commas_pos).c_str());
+  value->no = atoi(iter->second.substr(commas_pos+1).c_str());
+  return true;
 }
 
 MongoSync::MongoSync(const Options& opt) 
@@ -148,7 +252,7 @@ MongoSync* MongoSync::NewMongoSync(const Options& opt) {
 	return mongosync;
 }
 
-mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr) {
+mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const bool bg) {
 	std::string errmsg;
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
@@ -156,14 +260,20 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_p
 		std::cerr << "connect to srv: " << srv_ip_port << " failed, with errmsg: " << errmsg << std::endl;
 		delete conn;
 		return NULL;
-	}	std::cerr << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
+	}
+  if (!bg) {
+    std::cerr << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
+  }
+
 	if (!passwd.empty()) {
 		if (!conn->auth(auth_db, user, passwd, errmsg, use_mcr)) {
 			std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
 			delete conn;
 			return NULL;
 		}
-		std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
+    if (!bg) {
+		  std::cerr << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
+    }
 	}
 	return conn;
 }

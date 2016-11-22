@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -O0 -g
+CXXFLAGS = -O2 -g
 # CXXFLAGS = -O0 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -gdwarf-2 -Wno-unused-variable
 
 OBJECT = mongosync
@@ -29,7 +29,7 @@ LIBS = -lm \
 
 INCLUDE_PATH = -I$(DRIVER_DIR)/build/install/include/
 
-.PHONY: all dist_clean clean version
+.PHONY: all driver dist_clean clean 
 
 
 BASE_BOJS := $(wildcard ./*.cc)
@@ -41,11 +41,15 @@ all: $(OBJECT)
 	mkdir -p $(OUTPUT)
 	cp $(OBJECT) $(OUTPUT)
 	rm -rf $(OBJECT)
+	cp mongosync.conf $(OUTPUT)
 	@echo "Success, go, go, go..."
 
 
 mongosync: $(DRIVER_LIB) $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(DRIVER_LIB) $(INCLUDE_PATH) $(LIB_PATH) $(LIBS)
+
+driver:
+	scons -C $(DRIVER_DIR) --ssl install -j $(CPU_USE)
 
 $(DRIVER_LIB):
 	scons -C $(DRIVER_DIR) --ssl install -j $(CPU_USE)

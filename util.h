@@ -13,7 +13,7 @@ namespace util {
 
 uint64_t Microtime();
 std::string Int2Str(int64_t num);
-
+std::string Trim(const std::string &str, const std::string del_str = " \t\n");
 
 /*************************************************************************************************/
 typedef std::vector<mongo::BSONObj> WriteBatch;
@@ -25,7 +25,7 @@ typedef struct {
 
 class BGThreadGroup { //This BGThreadGroup is only used for batch write
 
-#define MAX_LAG_NUM 5
+#define MAX_LAG_NUM 50
 #define BG_THREAD_NUM 5
 public:
   BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db = "", const std::string &user = "", const std::string &passwd = "", const bool use_mcr = false);
