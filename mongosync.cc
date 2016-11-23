@@ -325,41 +325,47 @@ void MongoSync::SyncOplog() {
 void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
 	if (!opt_.db.empty() && opt_.coll.empty()) {
-		query = mongo::Query(BSON("ns" << BSON("$regex" << ("^"+opt_.db)) << "ts" << mongo::GT << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
+		query = mongo::Query(BSON("ns" << BSON("$regex" << ("^"+opt_.db)) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
 	} else if (!opt_.db.empty() && !opt_.coll.empty()) {
 		NamespaceString ns(opt_.db, opt_.coll);
 		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) << BSON("ns" << ns.db() + ".system.indexes") << BSON("ns" << ns.db() + ".system.$cmd"))
-															<< "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp()));
+					<< "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp()));
 	}
 	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL, mongo::QueryOption_CursorTailable | mongo::QueryOption_AwaitData);
-    std::string dst_db, dst_coll;
-    if (need_clone_oplog()) {
-	    NamespaceString ns(opt_.dst_oplog_ns);
-	    dst_db = ns.db(),
-        dst_coll = ns.coll(); 
-    } else {
-        dst_db = opt_.dst_db;
-        dst_coll = opt_.dst_coll; 
-    }
+	std::string dst_db, dst_coll;
+	if (need_clone_oplog()) {
+		NamespaceString ns(opt_.dst_oplog_ns);
+		dst_db = ns.db(),
+		dst_coll = ns.coll(); 
+	} else {
+		dst_db = opt_.dst_db;
+		dst_coll = opt_.dst_coll; 
+	}
 	mongo::BSONObj oplog;	
 	OplogTime cur_times;
 	while (true) {
 		while (!cursor->more()) {
+			if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
+				std::cerr << std::endl;
+				return;
+			}
 			sleep(1);
 		}
-		oplog = cursor->next();	
-		ProcessSingleOplog(opt_.db, opt_.coll, dst_db, dst_coll, oplog.getOwned(), op);
-		memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));	
-        std::cerr << "\rProgress sync to timestamp: " << cur_times.sec << "," << cur_times.no << "       ";
-		if (!before(cur_times, oplog_finish_)) {
-			break;
+		oplog = cursor->next();
+		if (ProcessSingleOplog(opt_.db, opt_.coll, dst_db, dst_coll, oplog.getOwned(), op)) {
+			memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));	
+			std::cerr << "\rProgress sync to timestamp: " << cur_times.sec << "," << cur_times.no << "       "; // just for printing better
+			std::cerr << "\rProgress sync to timestamp: " << cur_times.sec << "," << cur_times.no;
 		}
-		if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
-			break;	
-		}
+		//		if (!before(cur_times, oplog_finish_)) {
+		//			break;
+		//		}
+		//		if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
+		//			break;	
+		//		}
 	}
-    std::cerr << std::endl;
-	
+	std::cerr << std::endl;
+
 }
 
 void MongoSync::CloneDb() {
@@ -367,18 +373,21 @@ void MongoSync::CloneDb() {
 	if (GetAllCollByVersion(src_conn_, src_version_, opt_.db, colls) == -1) { // get collections failed
 		return;
 	}
+
 	std::string dst_db = opt_.dst_db.empty() ? opt_.db : opt_.dst_db;
+  std::cerr << "cloning db: " << opt_.db << " ----> " << dst_db << std::endl;
 	for (std::vector<std::string>::const_iterator iter = colls.begin();
 			iter != colls.end();
 			++iter) {
 		CloneColl(opt_.db + "." + *iter, dst_db + "." + *iter);
 	}
+  std::cerr << "clone db: " << opt_.db << " ----> " << dst_db << " finished" << std::endl;
 }
 
 void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size) {
 //	std::string src_ns = opt_.db + "." + opt_.coll;
 //	std::string dst_ns = (opt_.dst_db.empty() ? opt_.db : opt_.dst_db) + "." + (opt_.dst_coll.empty() ? opt_.coll : opt_.dst_coll);
-	std::cerr << "clone "	<< src_ns << std::endl;
+	std::cerr << "cloning "	<< src_ns << " to " << dst_ns << std::endl;
 	uint64_t total = src_conn_->count(src_ns, opt_.filter, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout), cnt = 0;
 	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(src_ns, opt_.filter, 0, 0, NULL, mongo::QueryOption_SlaveOk);
 	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
@@ -401,6 +410,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 			percent = cnt * 100 / total;
 			marks.assign(percent, '#');
 			blanks.assign(105-percent, ' ');
+			std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s               ";	
 			std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s";	
 		}
 	}
@@ -416,6 +426,7 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	marks.assign(100, '#');
 	blanks.assign(105-100, ' ');
 	std::cerr << "\rProgress  " << marks << blanks << 100 << "%,  elapsed time: " << time(NULL)-st << "s" << std::endl;;
+	std::cerr << "clone "	<< src_ns << " to " << dst_ns << " success, records num: " << total << std::endl;
 	if (!opt_.no_index) {
 		CloneCollIndex(src_ns, dst_ns);
 	}
@@ -429,8 +440,8 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 	}
 	int32_t indexes_num = indexes.nFields(), idx = 0;
 	mongo::BSONElement element;
-	mongo::BSONObjBuilder builder;
 	while (idx < indexes_num) {
+	  mongo::BSONObjBuilder builder;
 		mongo::BSONObjIterator i(indexes.getObjectField(util::Int2Str(idx++)));
 		std::string field_name;
 		while (i.more()) {
@@ -448,27 +459,38 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 	std::cerr << "\rclone " << sns << " indexes success" << std::endl;
 }
 
-void MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string& dst_db, std::string& dst_coll, const mongo::BSONObj& oplog, OplogProcessOp op) {
-    std::string oplog_ns = oplog.getStringField("ns");	
-	if (!db.empty()) {
-		std::string sns = db + "." + (coll.empty() ? "" : coll);
+bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op) {
+	std::string oplog_ns = oplog.getStringField("ns");	
+	if (!db.empty() && coll.empty()) {
+		std::string sns = db + ".";
 		if (oplog_ns.size() < sns.size() || oplog_ns.substr(0, sns.size()) != sns) {
-			return;
+			return false;
 		}
 	}
-	std::string dns = dst_db + "." + dst_coll;
-	if (op == kClone) {
-		dst_conn_->insert(dns, oplog);
-		return;
+
+	if (mongo::str::endsWith(oplog_ns.c_str(), ".system.indexes")) {
+		if (opt_.no_index) {
+			return false;
+		}
+		std::string op_ns = oplog.getObjectField("o").getStringField("ns");
+		if (!opt_.coll.empty() && NamespaceString(op_ns).coll() != opt_.coll) {
+			return false;
+		}
 	}
 
-    if (dst_db.empty()) {
-        dst_db = db.empty() ? NamespaceString(oplog_ns).db() : db;
-    }
-    if (dst_coll.empty()) {
-        dst_coll = coll.empty() ? NamespaceString(oplog_ns).coll() : coll;
-    }
-   
+	std::string dns = dst_db + "." + dst_coll;
+	if (op == kClone) {
+		dst_conn_->insert(dns, oplog, 0, &mongo::WriteConcern::unacknowledged);
+		return true;
+	}
+
+	if (dst_db.empty()) {
+		dst_db = db.empty() ? NamespaceString(oplog_ns).db() : db;
+	}
+	if (dst_coll.empty()) {
+		dst_coll = coll.empty() ? NamespaceString(oplog_ns).coll() : coll;
+	}
+
 	std::string type = oplog.getStringField("op");
 	mongo::BSONObj obj = oplog.getObjectField("o");
 	switch(type.at(0)) {
@@ -486,6 +508,7 @@ void MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 		case 'c':
 			ApplyCmdOplog(dst_db, dst_coll, oplog, coll == dst_coll);
 	}
+	return true;
 }
 
 void MongoSync::ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog) {
@@ -496,10 +519,13 @@ void MongoSync::ApplyInsertOplog(const std::string& dst_db, const std::string& d
 	std::string dns = dst_db + "." + dst_coll;
 	if (ns.size() < sizeof(".system.indexes")
 			|| ns.substr(ns.size()-sizeof(".system.indexes")+1) != ".system.indexes") { //not index-ceating oplog
-		dst_conn_->insert(dns, obj);
+		dst_conn_->insert(dns, obj, 0, &mongo::WriteConcern::unacknowledged);
 		return;
 	}
-	
+
+	if (dst_coll == "system.indexes") {
+		dns = dst_db + "." + NamespaceString(obj.getStringField("ns")).coll(); // the collection name is system.indexes, needs modified	
+	}
 	mongo::BSONObjBuilder build;
 	mongo::BSONObjIterator iter(obj);
 	mongo::BSONElement ele;
@@ -600,7 +626,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 			if (mongoutils::str::endsWith(coll.c_str(), ".system.namespaces") 
 					|| mongoutils::str::endsWith(coll.c_str(), ".system.users") 
 					|| mongoutils::str::endsWith(coll.c_str(), ".system.indexes")
-                    || mongoutils::str::endsWith(coll.c_str(), ".$_id_")) {
+          || coll.substr(coll.rfind("."), 2) == ".$") {
 				continue;
 			}
 			colls.push_back(coll.substr(coll.find(".")+1));
@@ -625,7 +651,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 	} else if (version_header == "2.4." || version == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor;
 		mongo::BSONArrayBuilder array_builder;
-		cursor = conn->query(ns.db() + ".systems.indexes",mongo::Query(BSON("ns" << coll_full_name)), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
+		cursor = conn->query(ns.db() + ".system.indexes", mongo::Query(BSON("ns" << coll_full_name)), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
 			std::cerr << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
@@ -649,7 +675,7 @@ void MongoSync::SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::st
 		mongo::BSONObj tmp;
 		conn->runCommand(ns.db(), BSON("createIndexes" << ns.coll() << "indexes" << BSON_ARRAY(index)), tmp);
 	} else if (version_header == "2.4." || version_header == "2.6.") {
-		conn->insert(ns.db() + ".system.indexes", index);	
+		conn->insert(ns.db() + ".system.indexes", index, 0, &mongo::WriteConcern::unacknowledged);	
 	} else {
 		std::cerr << "version: " << version << " is not surpported" << std::endl;
 		exit(-1);

@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -O2 -g
+CXXFLAGS = -O0 -g
 # CXXFLAGS = -O0 -g -pg -pipe -fPIC -D__XDEBUG__ -W -Wwrite-strings -Wpointer-arith -Wreorder -Wswitch -Wsign-promo -Wredundant-decls -Wformat -Wall -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -gdwarf-2 -Wno-unused-variable
 
 OBJECT = mongosync
