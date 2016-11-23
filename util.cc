@@ -90,7 +90,7 @@ void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
 
 
   pthread_mutex_lock(&mlock_);
-  while (write_queue_.size() >= MAX_LAG_NUM) {
+  while (!write_queue_.empty()) {
     pthread_mutex_unlock(&mlock_);
     sleep(1);
     pthread_mutex_lock(&mlock_);

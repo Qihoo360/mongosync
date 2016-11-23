@@ -53,8 +53,18 @@ static void Usage() {
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
 }
 
+#define CHECK_ARGS_NUM() \
+	  if (argc <= idx + 1) { \
+			    std::cerr << "Wrong argument number" << std::endl; \
+			    Usage(); \
+			    exit(-1); \
+			  } \
+  	while(0)
+
 void Options::ParseCommand(int argc, char** argv) {
-	int32_t idx = 1;
+	int32_t idx = 0;
+	CHECK_ARGS_NUM();
+	++idx;
 	std::string time_str;
 	int32_t commas_pos;
 	while (idx < argc) {
@@ -62,52 +72,68 @@ void Options::ParseCommand(int argc, char** argv) {
 			Usage();
 			exit(0);
 		} else if (strcasecmp(argv[idx], "--src_srv") == 0) {
+			CHECK_ARGS_NUM();
 			src_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_user") == 0) {
+			CHECK_ARGS_NUM();
 			src_user = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_passwd") == 0) {
+			CHECK_ARGS_NUM();
 			src_passwd = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_auth_db") == 0) {
+			CHECK_ARGS_NUM();
 			src_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--src_use_mcr") == 0) {
 			src_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--dst_srv") == 0) {
+			CHECK_ARGS_NUM();
 			dst_ip_port = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_user") == 0) {
+			CHECK_ARGS_NUM();
 			dst_user = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_passwd") == 0) {
+			CHECK_ARGS_NUM();
 			dst_passwd = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_auth_db") == 0) {
+			CHECK_ARGS_NUM();
 			dst_auth_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_use_mcr") == 0) {
 			dst_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--db") == 0) {
+			CHECK_ARGS_NUM();
 			db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_db") == 0) {
+			CHECK_ARGS_NUM();
 			dst_db = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--coll") == 0) {
+			CHECK_ARGS_NUM();
 			coll = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_coll") == 0) {
+			CHECK_ARGS_NUM();
 			dst_coll = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--oplog") == 0) {
 			oplog = true;
 		} else if (strcasecmp(argv[idx], "--raw_oplog") == 0) {
 			raw_oplog = true;
 		} else if (strcasecmp(argv[idx], "--op_start") == 0) {
+			CHECK_ARGS_NUM();
 			time_str = argv[++idx];
 			commas_pos = time_str.find(",");
 			oplog_start.sec = atoi(time_str.substr(0, commas_pos).c_str());
 			oplog_start.no = atoi(time_str.substr(commas_pos+1).c_str());
 		} else if (strcasecmp(argv[idx], "--op_end") == 0) {
+			CHECK_ARGS_NUM();
 			time_str = argv[++idx];
 			commas_pos = time_str.find(",");
 			oplog_end.sec = atoi(time_str.substr(0, commas_pos).c_str());
 			oplog_end.no = atoi(time_str.substr(commas_pos+1).c_str());
 		} else if (strcasecmp(argv[idx], "--dst_op_ns") == 0) {
+			CHECK_ARGS_NUM();
 			dst_oplog_ns = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--no_index") == 0) {
 			no_index = true;
 		} else if (strcasecmp(argv[idx], "--filter") == 0) {
+			CHECK_ARGS_NUM();
 			filter = mongo::Query(argv[++idx]);
 		} else {
 			std::cerr << "Unkown options" << std::endl;
@@ -290,7 +316,10 @@ int32_t MongoSync::InitConn() {
 
 void MongoSync::Process() {
 	oplog_begin_ = opt_.oplog_start;
-	if (opt_.oplog_start.empty()) {
+	if ((need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
+//		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, false);
+		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
+	} else if (opt_.oplog_start.empty()) {
 		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
 	}
 	oplog_finish_ = opt_.oplog_end;
@@ -299,9 +328,7 @@ void MongoSync::Process() {
 		CloneOplog();
 		return;
 	}
-	if ((need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
-		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, false);
-	}
+
 	if (need_clone_db()) {
 		CloneDb();
 	} else if (need_clone_coll()) {
@@ -309,6 +336,7 @@ void MongoSync::Process() {
 		std::string dns = (opt_.dst_db.empty() ? opt_.db : opt_.dst_db) + "." + (opt_.dst_coll.empty() ? opt_.coll : opt_.dst_coll);
 		CloneColl(sns, dns);
 	}
+
 	if (need_sync_oplog()) {
 		SyncOplog();
 	}
@@ -647,7 +675,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 			std::cerr << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
 		}
-		indexes = tmp.getObjectField("cursor").getObjectField("firstBatch");
+		indexes = tmp.getObjectField("cursor").getObjectField("firstBatch").getOwned();
 	} else if (version_header == "2.4." || version == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor;
 		mongo::BSONArrayBuilder array_builder;
