@@ -506,17 +506,17 @@ bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 		}
 	}
 
-	std::string dns = dst_db + "." + dst_coll;
-	if (op == kClone) {
-		dst_conn_->insert(dns, oplog, 0, &mongo::WriteConcern::unacknowledged);
-		return true;
-	}
-
 	if (dst_db.empty()) {
 		dst_db = db.empty() ? NamespaceString(oplog_ns).db() : db;
 	}
 	if (dst_coll.empty()) {
 		dst_coll = coll.empty() ? NamespaceString(oplog_ns).coll() : coll;
+	}
+	std::string dns = dst_db + "." + dst_coll;
+
+	if (op == kClone) {
+		dst_conn_->insert(dns, oplog, 0, &mongo::WriteConcern::unacknowledged);
+		return true;
 	}
 
 	std::string type = oplog.getStringField("op");
