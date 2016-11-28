@@ -534,6 +534,9 @@ bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 		case 'n':
 			break;
 		case 'c':
+			if (mongo::str::endsWith(dst_coll, "$cmd")) { //destination collection name is not specified
+				dst_coll = "";
+			}
 			ApplyCmdOplog(dst_db, dst_coll, oplog, coll == dst_coll);
 	}
 	return true;
@@ -582,11 +585,15 @@ void MongoSync::ApplyCmdOplog(const std::string& dst_db, const std::string& dst_
 		mongo::BSONElement ele;
 		mongo::BSONObjBuilder build;
 		std::string field;
-		build << "dropIndexes" << dst_coll;
 		while (iter.more()) {
 			ele = iter.next();
 			field = ele.fieldName();
 			if (field == "deleteIndexes" || field == "dropIndexes") {
+				if (dst_coll.empty()) {
+					build << "dropIndexes" << ele.value();
+				} else {
+					build << "dropIndexes" << dst_coll;
+				}
 				continue;
 			}
 			build.append(ele);
