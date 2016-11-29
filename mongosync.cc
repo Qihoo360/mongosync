@@ -51,6 +51,7 @@ static void Usage() {
 	std::cerr << "--dst_op_ns arg          the destination namespace for raw oplog mode" << std::endl;
 	std::cerr << "--no_index               whether to clone the db or collection corresponding index" << std::endl;
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
+	std::cerr << "--bg_num arg             the background thread number for cloning data(not oplog syncing and oplog storing)" << std::endl;
 }
 
 #define CHECK_ARGS_NUM() \
@@ -135,6 +136,9 @@ void Options::ParseCommand(int argc, char** argv) {
 		} else if (strcasecmp(argv[idx], "--filter") == 0) {
 			CHECK_ARGS_NUM();
 			filter = mongo::Query(argv[++idx]);
+		} else if (strcasecmp(argv[idx], "--bg_num") == 0) {
+			CHECK_ARGS_NUM();
+			bg_num = atoi(argv[++idx]);
 		} else {
 			std::cerr << "Unkown options" << std::endl;
 			Usage();
@@ -200,6 +204,8 @@ void Options::LoadConf(const std::string &conf_file) {
   GetConfBool("no_index", &no_index);
 
   GetConfQuery("filter", &filter);    
+
+	GetConfInt("bg_num", &bg_num);
 }
 
 
@@ -225,6 +231,13 @@ bool Options::GetConfBool(const std::string &item_key, bool *value) {
   return true;
 }
 
+int32_t Options::GetConfInt(const std::string &item_key, int32_t *value) {
+	CHECK_ITEM_EXIST(item_key, iter);
+
+	*value = atoi(iter->second.c_str());
+	return true;
+}
+
 bool Options::GetConfStr(const std::string &item_key, std::string *value) {
   CHECK_ITEM_EXIST(item_key, iter);
   
@@ -248,6 +261,31 @@ bool Options::GetConfOplogTime(const std::string &item_key, OplogTime *value) {
   return true;
 }
 
+bool Options::ValidCheck() {
+	if (db.empty() && !coll.empty()) {
+		std::cerr << "[ERRR]\tsource collection is specified, but source database not" << std::endl;
+		return false;
+	}
+
+	if (dst_db.empty() && !dst_coll.empty()) {
+		std::cerr << "[ERROR]\tdestination collection is specified, but destination database not" << std::endl;
+		return false;
+	}
+	
+	if (!dst_coll.empty() && coll.empty()) {
+		std::cerr << "[ERROR]\tdestination collection is specified, but source collection not" << std::endl;
+		return false;
+	}
+
+	if (db.empty() && !dst_db.empty()) {
+		std::cerr << "[ERROR]\tdestination database is specified, but the source database not" << std::endl;
+		return false;
+	}
+
+	return true;
+}
+
+
 MongoSync::MongoSync(const Options& opt) 
 	: opt_(opt),
 	src_conn_(NULL),
@@ -256,7 +294,8 @@ MongoSync::MongoSync(const Options& opt)
 			             opt.dst_auth_db,
 									 opt.dst_user,
 									 opt.dst_passwd,
-									 opt.dst_use_mcr) {
+									 opt.dst_use_mcr,
+									 opt.bg_num) {
 }
 
 
@@ -316,7 +355,7 @@ int32_t MongoSync::InitConn() {
 
 void MongoSync::Process() {
 	oplog_begin_ = opt_.oplog_start;
-	if ((need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
+	if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
 //		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, false);
 		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
 	} else if (opt_.oplog_start.empty()) {
@@ -329,7 +368,9 @@ void MongoSync::Process() {
 		return;
 	}
 
-	if (need_clone_db()) {
+	if (need_clone_all_db()) {
+		CloneAllDb();	
+	} else if (need_clone_db()) {
 		CloneDb();
 	} else if (need_clone_coll()) {
 		std::string sns = opt_.db + "." + opt_.coll;
@@ -352,11 +393,12 @@ void MongoSync::SyncOplog() {
 
 void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
-	if (!opt_.db.empty() && opt_.coll.empty()) {
-		query = mongo::Query(BSON("ns" << BSON("$regex" << ("^"+opt_.db)) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
+//	if (!opt_.db.empty() && opt_.coll.empty()) {
+	if (opt_.coll.empty()) { // both specifying db name and not specifying
+		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
 	} else if (!opt_.db.empty() && !opt_.coll.empty()) {
 		NamespaceString ns(opt_.db, opt_.coll);
-		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) << BSON("ns" << ns.db() + ".system.indexes") << BSON("ns" << ns.db() + ".system.$cmd"))
+		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) << BSON("ns" << ns.db() + ".system.indexes") << BSON("ns" << ns.db() + ".$cmd") << BSON("ns" << "admin.$cmd"))
 					<< "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp()));
 	}
 	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL, mongo::QueryOption_CursorTailable | mongo::QueryOption_AwaitData);
@@ -396,20 +438,40 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 
 }
 
-void MongoSync::CloneDb() {
+void MongoSync::CloneAllDb() {
+	mongo::Query q = BSON("listDatabases" << 1);
+	mongo::BSONObj obj = src_conn_->findOne("admin.$cmd", q, NULL, mongo::QueryOption_SlaveOk).getObjectField("databases").getOwned();
+	std::set<std::string> fields;
+	obj.getFieldNames(fields);
+	std::string db;
+
+	for (std::set<std::string>::iterator iter = fields.begin(); iter != fields.end(); ++iter) {
+		db = obj.getObjectField(*iter).getStringField("name");
+		if (db == "admin" || db == "local") {
+			continue;
+		}
+		CloneDb(db);
+	}
+}
+
+void MongoSync::CloneDb(std::string db) {
+	if (db == "") {
+		db = opt_.db;
+	}
+
 	std::vector<std::string> colls;		
-	if (GetAllCollByVersion(src_conn_, src_version_, opt_.db, colls) == -1) { // get collections failed
+	if (GetAllCollByVersion(src_conn_, src_version_, db, colls) == -1) { // get collections failed
 		return;
 	}
 
-	std::string dst_db = opt_.dst_db.empty() ? opt_.db : opt_.dst_db;
-  std::cerr << "cloning db: " << opt_.db << " ----> " << dst_db << std::endl;
+	std::string dst_db = opt_.dst_db.empty() ? db : opt_.dst_db;
+  std::cerr << "cloning db: " << db << " ----> " << dst_db << std::endl;
 	for (std::vector<std::string>::const_iterator iter = colls.begin();
 			iter != colls.end();
 			++iter) {
-		CloneColl(opt_.db + "." + *iter, dst_db + "." + *iter);
+		CloneColl(db + "." + *iter, dst_db + "." + *iter);
 	}
-  std::cerr << "clone db: " << opt_.db << " ----> " << dst_db << " finished" << std::endl;
+  std::cerr << "clone db: " << db << " ----> " << dst_db << " finished" << std::endl;
 }
 
 void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size) {
@@ -489,9 +551,11 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 
 bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op) {
 	std::string oplog_ns = oplog.getStringField("ns");	
-	if (!db.empty() && coll.empty()) {
+	if (!db.empty() && coll.empty()) { //filter the same prefix db names, because of cannot filtering this situation with regex
 		std::string sns = db + ".";
-		if (oplog_ns.size() < sns.size() || oplog_ns.substr(0, sns.size()) != sns) {
+		if (oplog_ns.size() < sns.size() 
+				|| oplog_ns.substr(0, sns.size()) != sns
+				|| oplog_ns == "admin.$cmd") { // only for renameCollection command
 			return false;
 		}
 	}
@@ -534,6 +598,12 @@ bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 		case 'n':
 			break;
 		case 'c':
+			if ((dst_db == "local") || (dst_db == "admin") && dst_coll != "$cmd") { //for dst_db = admin and dst_coll == $cmd situation's filtering is to be done later
+				return false;
+			}
+			if (!coll.empty() && !mongo::str::endsWith("." + std::string(oplog.getObjectField("o").firstElement().valuestr()), "." + coll)) { // filter the only coll-related oplog
+				return false;
+			}
 			if (mongo::str::endsWith(dst_coll, "$cmd")) { //destination collection name is not specified
 				dst_coll = "";
 			}
@@ -576,11 +646,38 @@ void MongoSync::ApplyInsertOplog(const std::string& dst_db, const std::string& d
 void MongoSync::ApplyCmdOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_ns) { //TODO: other cmd oplog could be reconsidered
 	mongo::BSONObj obj = oplog.getObjectField("o"), tmp;
 	std::string first_field = obj.firstElementFieldName();
-	if (first_field != "deleteIndexes" && first_field != "dropIndexes") { // Only care the indexes-related command oplog
+	if (first_field != "deleteIndexes" 
+			&& first_field != "dropIndexes"
+			&& first_field != "drop"
+			&& first_field != "collMod"
+			&& first_field != "create"
+			&& first_field != "dropDatabase"
+			&& first_field != "renameCollection") { // in admin.$cmd, under db, coll specified, this option has been filtered
 		return;
 	}
-
-	if (!same_ns) {
+	
+	if (first_field == "renameCollection") { //get here coll must be empty, so the dst_coll is also empty
+		mongo::BSONObjIterator iter(obj);
+		mongo::BSONElement ele;
+		mongo::BSONObjBuilder build;
+		std::string field;
+		while (iter.more()) {
+			ele = iter.next();
+			if (field == "renameCollection" || field == "to") {
+				if (dst_db == "admin") { //get here, db is empty, all db(expect admin and local) is related
+					continue;
+				}
+				std::string ns = ele.valuestr();	
+				if (!opt_.db.empty() && NamespaceString(ns).db() != opt_.db) { // should put opt_.db here, optimize it later
+					return;	
+				}
+				build << field << dst_db + NamespaceString(ns).coll();
+				continue;
+			}
+			build.append(ele);
+		}
+		obj = build.obj();
+	} else if (!same_ns || dst_coll.empty()) {
 		mongo::BSONObjIterator iter(obj);
 		mongo::BSONElement ele;
 		mongo::BSONObjBuilder build;
@@ -588,20 +685,25 @@ void MongoSync::ApplyCmdOplog(const std::string& dst_db, const std::string& dst_
 		while (iter.more()) {
 			ele = iter.next();
 			field = ele.fieldName();
-			if (field == "deleteIndexes" || field == "dropIndexes") {
+			if (field == "deleteIndexes" 
+					|| field == "dropIndexes"
+					|| field == "drop"
+					|| field == "collMod"
+					|| field == "create") {
 				if (dst_coll.empty()) {
-					build << "dropIndexes" << ele.value();
+					build << field << std::string(ele.valuestr());
 				} else {
-					build << "dropIndexes" << dst_coll;
+					build << field << dst_coll;
 				}
 				continue;
-			}
+			}		
 			build.append(ele);
 		}
 		obj = build.obj();
 	}
+	std::string str = obj.toString();
 	if (!dst_conn_->runCommand(dst_db, obj, tmp)) {
-		std::cerr << "dropIndexes/deleteIndexes failed, errms: " << tmp << std::endl;
+		std::cerr << "administration oplog sync failed, with oplog: " << obj.toString() << ", errms: " << tmp << std::endl;
 	}
 }
 

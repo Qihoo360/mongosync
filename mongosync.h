@@ -81,11 +81,15 @@ struct Options {
 	bool no_index;
 	mongo::Query filter;
 
+	int32_t bg_num; //bg thread for cloning data
+
   void ParseCommand(int argc, char** argv);
   void LoadConf(const std::string &conf_file);
+	bool ValidCheck();
 private:
   std::map<std::string, std::string> items_;
   bool GetConfBool(const std::string &item_key, bool *value);
+  int32_t GetConfInt(const std::string &item_key, int32_t *value);
   bool GetConfStr(const std::string &item_key, std::string *value);
   bool GetConfQuery(const std::string &item_key, mongo::Query *value);
   bool GetConfOplogTime(const std::string &item_key, OplogTime *value);
@@ -140,7 +144,8 @@ public:
 
 	void Process();
 	void CloneOplog();
-	void CloneDb();
+	void CloneAllDb();
+	void CloneDb(std::string db = "");
 	void CloneColl(std::string src_ns, std::string dst_ns, int32_t batch_size = BATCH_BUFFER_SIZE);
 	void SyncOplog();
 
@@ -176,6 +181,10 @@ private:
 
 	bool need_clone_oplog() {
 		return opt_.raw_oplog;
+	}
+
+	bool need_clone_all_db() {
+		return !opt_.raw_oplog && opt_.db.empty() && opt_.coll.empty() && opt_.oplog_start.empty() && opt_.oplog_end.empty();
 	}
 
 	bool need_clone_db() {

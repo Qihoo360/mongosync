@@ -33,14 +33,15 @@ std::string Trim(const std::string &str, const std::string del_str) {
 
 /*******************************************************************************************/
 
-BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr)
+BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const int32_t bg_thread_num)
   :srv_ip_port_(srv_ip_port),
 	auth_db_(auth_db),
 	user_(user),
 	passwd_(passwd),
 	running_(false), 
   should_exit_(false),
-	use_mcr_(use_mcr) {
+	use_mcr_(use_mcr),
+	bg_thread_num_(bg_thread_num) {
 
   pthread_mutex_init(&mlock_, NULL);
   pthread_cond_init(&clock_, NULL);
@@ -66,7 +67,7 @@ void BGThreadGroup::StartThreadsIfNeed() {
   }
 
 	pthread_t tid;
-	for (int idx = 0; idx != BG_THREAD_NUM; ++idx) {
+	for (int idx = 0; idx != bg_thread_num_; ++idx) {
   	if (pthread_create(&tid, NULL, BGThreadGroup::Run, this) != -1) {
   	  tids_.push_back(tid);
 //  	  std::cerr << "BGThread: " << idx << " starts success!" << std::endl;

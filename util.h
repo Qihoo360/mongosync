@@ -27,7 +27,7 @@ class BGThreadGroup { //This BGThreadGroup is only used for batch write
 
 #define BG_THREAD_NUM 10
 public:
-  BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db = "", const std::string &user = "", const std::string &passwd = "", const bool use_mcr = false);
+  BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db = "", const std::string &user = "", const std::string &passwd = "", const bool use_mcr = false, int32_t bg_thread_num = 10);
   ~BGThreadGroup();
 
   void AddWriteUnit(const std::string &ns, WriteBatch *unit);
@@ -81,6 +81,7 @@ private:
 	std::string user_;
 	std::string passwd_;
 	bool use_mcr_;
+	int32_t bg_thread_num_;
 
   pthread_cond_t clock_;
   pthread_mutex_t mlock_;
