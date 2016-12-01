@@ -50,7 +50,8 @@ struct Options {
 		oplog(false),
     raw_oplog(false),
     dst_oplog_ns("sync.oplog"),
-    no_index(false) {
+    no_index(false),
+    bg_num(10) {
    }
 
 	std::string src_ip_port;
