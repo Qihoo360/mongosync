@@ -785,7 +785,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 			return -1;
 		}
 		indexes = tmp.getObjectField("cursor").getObjectField("firstBatch").getOwned();
-	} else if (version_header == "2.4." || version == "2.6.") {
+	} else if (version_header == "2.4." || version_header == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor;
 		mongo::BSONArrayBuilder array_builder;
 		cursor = conn->query(ns.db() + ".system.indexes", mongo::Query(BSON("ns" << coll_full_name)), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
