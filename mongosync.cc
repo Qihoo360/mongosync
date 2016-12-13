@@ -515,7 +515,7 @@ retry:
   	  bg_thread_group_.AddWriteUnit(dst_ns, batch);
 		}
 	} catch (mongo::DBException &e) {
-		std::cerr << "[WARNING] occurs exception: " << e.toString() << std::endl;
+		std::cerr << "\r[WARNING] occurs exception: " << e.toString() << ", retry it" << std::endl;
 		delete batch;
 		if (retries--) {
 			goto retry;
