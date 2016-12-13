@@ -14,6 +14,7 @@ namespace util {
 uint64_t Microtime();
 std::string Int2Str(int64_t num);
 std::string Trim(const std::string &str, const std::string del_str = " \t\n");
+bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range);
 
 /*************************************************************************************************/
 typedef std::vector<mongo::BSONObj> WriteBatch;

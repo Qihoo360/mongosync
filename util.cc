@@ -31,6 +31,13 @@ std::string Trim(const std::string &str, const std::string del_str) {
   return str.substr(begin, end-begin+1);
 }
 
+bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range) {
+	if (v1 <= v2 + range && v1 >= v2 - range) {
+		return true;
+	}
+	return false;
+}
+
 /*******************************************************************************************/
 
 BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const int32_t bg_thread_num)

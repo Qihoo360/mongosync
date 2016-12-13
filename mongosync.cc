@@ -479,34 +479,50 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 //	std::string dst_ns = (opt_.dst_db.empty() ? opt_.db : opt_.dst_db) + "." + (opt_.dst_coll.empty() ? opt_.coll : opt_.dst_coll);
 	std::cerr << "cloning "	<< src_ns << " to " << dst_ns << std::endl;
 	uint64_t total = src_conn_->count(src_ns, opt_.filter, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout), cnt = 0;
-	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(src_ns, opt_.filter, 0, 0, NULL, mongo::QueryOption_SlaveOk);
-	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
-	int32_t acc_size = 0, percent = 0;
-	uint64_t st = time(NULL);
+	std::auto_ptr<mongo::DBClientCursor> cursor;
+	int32_t acc_size, percent, retries = 3;
+	uint64_t st;
 	std::string marks, blanks;
-	while (cursor->more()) {
-		mongo::BSONObj obj = cursor->next();
-		acc_size += obj.objsize();
-		batch->push_back(obj.getOwned());
-		if (acc_size >= batch_size) {
-//			dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
-      bg_thread_group_.AddWriteUnit(dst_ns, batch);
-//			batch.clear();
-      batch = new std::vector<mongo::BSONObj>;
-			acc_size = 0;
+
+retry:
+	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL, mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk);
+	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
+	acc_size = 0, percent = 0;
+	st = time(NULL);
+	try {
+		while (cursor->more()) {
+			mongo::BSONObj obj = cursor->next();
+			acc_size += obj.objsize();
+			batch->push_back(obj.getOwned());
+			if (acc_size >= batch_size) {
+//				dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
+  	    bg_thread_group_.AddWriteUnit(dst_ns, batch);
+//				batch.clear();
+  	    batch = new std::vector<mongo::BSONObj>;
+				acc_size = 0;
+			}
+			++cnt;
+			if (!(cnt & 0x3FF)) {
+				percent = cnt * 100 / total;
+				marks.assign(percent, '#');
+				blanks.assign(105-percent, ' ');
+				std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s               ";	
+				std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s";	
+			}
 		}
-		++cnt;
-		if (!(cnt & 0x3FF)) {
-			percent = cnt * 100 / total;
-			marks.assign(percent, '#');
-			blanks.assign(105-percent, ' ');
-			std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s               ";	
-			std::cerr << "\rProgress  " << marks << blanks << percent << "%,  elapsed time: " << time(NULL)-st << "s";	
+		if (!batch->empty()) {
+//      dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
+  	  bg_thread_group_.AddWriteUnit(dst_ns, batch);
 		}
-	}
-	if (!batch->empty()) {
-//		dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
-    bg_thread_group_.AddWriteUnit(dst_ns, batch);
+	} catch (mongo::DBException &e) {
+		std::cerr << "[WARNING] occurs exception: " << e.toString() << std::endl;
+		delete batch;
+		if (retries--) {
+			goto retry;
+		} else {
+			std::cerr << "[ERROR] occurs exception 3 times, exit" << std::endl;
+			exit(-1);
+		}
 	}
 
   while (!bg_thread_group_.write_queue_p()->empty()) {
@@ -551,11 +567,14 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 
 bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op) {
 	std::string oplog_ns = oplog.getStringField("ns");	
+	if (oplog_ns == "admin.system.users") {
+		return false;
+	}
 	if (!db.empty() && coll.empty()) { //filter the same prefix db names, because of cannot filtering this situation with regex
 		std::string sns = db + ".";
 		if (oplog_ns.size() < sns.size() 
 				|| oplog_ns.substr(0, sns.size()) != sns
-				|| oplog_ns == "admin.$cmd") { // only for renameCollection command
+				|| oplog_ns != "admin.$cmd") { // only for renameCollection command
 			return false;
 		}
 	}
@@ -751,7 +770,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 			colls.push_back(array.getObjectField(util::Int2Str(idx++)).getStringField("name"));
 		} 
 	} else if (version_header == "2.4." || version_header == "2.6.") {
-		std::auto_ptr<mongo::DBClientCursor> cursor = conn->query(db + ".system.namespaces", mongo::Query(), 0, 0, NULL, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
+		std::auto_ptr<mongo::DBClientCursor> cursor = conn->query(db + ".system.namespaces", mongo::Query().snapshot(), 0, 0, NULL, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
 			std::cerr << "get " << db << "'s collections failed" << std::endl;
 			return -1;
@@ -788,7 +807,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 	} else if (version_header == "2.4." || version_header == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor;
 		mongo::BSONArrayBuilder array_builder;
-		cursor = conn->query(ns.db() + ".system.indexes", mongo::Query(BSON("ns" << coll_full_name)), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
+		cursor = conn->query(ns.db() + ".system.indexes", mongo::Query(BSON("ns" << coll_full_name)).snapshot(), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
 			std::cerr << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
