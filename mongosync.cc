@@ -570,11 +570,10 @@ bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 	if (oplog_ns == "admin.system.users") {
 		return false;
 	}
-	if (!db.empty() && coll.empty()) { //filter the same prefix db names, because of cannot filtering this situation with regex
+	if (!db.empty() && coll.empty() && oplog_ns != "admin.$cmd") { //filter the same prefix db names, because of cannot filtering this situation with regex, and pass renameCollection command oplog(in admin.$cmd)
 		std::string sns = db + ".";
 		if (oplog_ns.size() < sns.size() 
-				|| oplog_ns.substr(0, sns.size()) != sns
-				|| oplog_ns != "admin.$cmd") { // only for renameCollection command
+				|| oplog_ns.substr(0, sns.size()) != sns) {
 			return false;
 		}
 	}
@@ -662,7 +661,7 @@ void MongoSync::ApplyInsertOplog(const std::string& dst_db, const std::string& d
 	SetCollIndexesByVersion(dst_conn_, dst_version_, dns, build.obj());	
 }
 
-void MongoSync::ApplyCmdOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_ns) { //TODO: other cmd oplog could be reconsidered
+void MongoSync::ApplyCmdOplog(std::string dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_ns) { //TODO: other cmd oplog could be reconsidered
 	mongo::BSONObj obj = oplog.getObjectField("o"), tmp;
 	std::string first_field = obj.firstElementFieldName();
 	if (first_field != "deleteIndexes" 
@@ -682,6 +681,7 @@ void MongoSync::ApplyCmdOplog(const std::string& dst_db, const std::string& dst_
 		std::string field;
 		while (iter.more()) {
 			ele = iter.next();
+			field = ele.fieldName();
 			if (field == "renameCollection" || field == "to") {
 				if (dst_db == "admin") { //get here, db is empty, all db(expect admin and local) is related
 					continue;
@@ -690,12 +690,13 @@ void MongoSync::ApplyCmdOplog(const std::string& dst_db, const std::string& dst_
 				if (!opt_.db.empty() && NamespaceString(ns).db() != opt_.db) { // should put opt_.db here, optimize it later
 					return;	
 				}
-				build << field << dst_db + NamespaceString(ns).coll();
+				build << field << dst_db + "." + NamespaceString(ns).coll();
 				continue;
 			}
 			build.append(ele);
 		}
 		obj = build.obj();
+		dst_db = "admin"; //renameCollection command must run against to admin database
 	} else if (!same_ns || dst_coll.empty()) {
 		mongo::BSONObjIterator iter(obj);
 		mongo::BSONElement ele;

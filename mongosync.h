@@ -170,7 +170,7 @@ private:
 	void GenericProcessOplog(OplogProcessOp op);
 	bool ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op);
 	void ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog);
-	void ApplyCmdOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_coll = true);
+	void ApplyCmdOplog(std::string dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_coll = true);
 	OplogTime GetSideOplogTime(mongo::DBClientConnection* conn, std::string ns, std::string db, std::string coll, bool first_or_last); //first_or_last==true->get the first timestamp; first_or_last==false->get the last timestamp
 
 	std::string GetMongoVersion(mongo::DBClientConnection* conn);
