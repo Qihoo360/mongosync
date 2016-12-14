@@ -683,7 +683,8 @@ void MongoSync::ApplyCmdOplog(std::string dst_db, const std::string& dst_coll, c
 			ele = iter.next();
 			field = ele.fieldName();
 			if (field == "renameCollection" || field == "to") {
-				if (dst_db == "admin") { //get here, db is empty, all db(expect admin and local) is related
+				if (dst_db == "admin") { //get here, db is empty, all db(exclude admin and local) is related
+					build.append(ele);
 					continue;
 				}
 				std::string ns = ele.valuestr();	
