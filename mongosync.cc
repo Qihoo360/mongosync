@@ -567,7 +567,7 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 
 bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op) {
 	std::string oplog_ns = oplog.getStringField("ns");	
-	if (oplog_ns == "admin.system.users") {
+	if (mongo::str::endsWith(oplog_ns, ".system.users")) { //filter all user related oplog, 2.4=>db.system.users, 3.x=>admin.system.users
 		return false;
 	}
 	if (!db.empty() && coll.empty() && oplog_ns != "admin.$cmd") { //filter the same prefix db names, because of cannot filtering this situation with regex, and pass renameCollection command oplog(in admin.$cmd)
