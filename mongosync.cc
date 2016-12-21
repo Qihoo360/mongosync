@@ -507,7 +507,7 @@ retry:
 				acc_size = 0;
 			}
 			++cnt;
-			if (!(cnt & 0x3FF)) {
+			if (!(cnt & 0xFF)) {
 				percent = cnt * 100 / total;
 				std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "\tcloing progress: " << cnt << "/" << total << "\t" << percent << "%" << "\t(objects)" << std::endl;
 			}
