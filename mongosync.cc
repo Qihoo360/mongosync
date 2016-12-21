@@ -422,25 +422,42 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	}
 
 	mongo::BSONObj oplog;	
-	OplogTime cur_times;
+	OplogTime cur_times, pre_times(0, 0);
 	char time_buf[32];
 	bool waiting = false;
+	int64_t pre = 0, cur;
 
 	while (true) {
 		while (!cursor->more()) {
+
 			if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
+				if (before(pre_times, cur_times)) {
+					std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
+				}
 				return;
 			}
+
 			if (!waiting) {
+				if (before(pre_times, cur_times)) {
+					pre_times = cur_times;	
+					std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
+				}
 				std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "waiting for new data..." << std::endl;
 				waiting = true;
 			}
+
 			sleep(1);
 		}
 		waiting = false;
+
 		oplog = cursor->next();
 		if (ProcessSingleOplog(opt_.db, opt_.coll, dst_db, dst_coll, oplog.getOwned(), op)) {
 			memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));
+		}
+		time(&cur);
+		if (cur > pre && before(pre_times, cur_times)) {
+			pre = cur;
+			pre_times = cur_times;
 			std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 		}
 	}
