@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <queue>
+#include <time.h>
 #include <pthread.h>
 
 #include "mongo/client/dbclient.h"
@@ -15,6 +16,7 @@ uint64_t Microtime();
 std::string Int2Str(int64_t num);
 std::string Trim(const std::string &str, const std::string del_str = " \t\n");
 bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range);
+std::string GetFormatTime(time_t t = -1); // Output format is: Feb 13 16:06:10 2013
 
 /*************************************************************************************************/
 typedef std::vector<mongo::BSONObj> WriteBatch;
@@ -88,7 +90,6 @@ private:
   pthread_mutex_t mlock_;
   std::queue<WriteUnit> write_queue_;
 };
-
 
 }
 #endif

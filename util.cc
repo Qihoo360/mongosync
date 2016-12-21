@@ -38,6 +38,15 @@ bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range) {
 	return false;
 }
 
+std::string GetFormatTime(time_t t) { // Output format is: Aug 23 14:55:02 2001
+	char buf[32];
+	if (t == -1) {
+		t = time(NULL);
+	}
+	strftime(buf, sizeof(buf), "%b %d %T %Y", localtime(&t));
+	return std::string(buf);
+}
+
 /*******************************************************************************************/
 
 BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const int32_t bg_thread_num)
@@ -77,13 +86,12 @@ void BGThreadGroup::StartThreadsIfNeed() {
 	for (int idx = 0; idx != bg_thread_num_; ++idx) {
   	if (pthread_create(&tid, NULL, BGThreadGroup::Run, this) != -1) {
   	  tids_.push_back(tid);
-//  	  std::cerr << "BGThread: " << idx << " starts success!" << std::endl;
   	} else {
-  	  std::cerr << "BGThread: " << idx << " starts error!" << std::endl;
+  	  std::cerr << "[WARN]\tBGThread: " << idx << " starts error!" << std::endl;
   	}
 	}
 	if (tids_.empty()) {
-		std::cerr << "BGThreadGroup all start fail!" << std::endl;
+		std::cerr << "[ERROR]\tBGThreadGroup all start fail!" << std::endl;
 		exit(-1);	
 	}
 	running_ = true;	

@@ -5,7 +5,8 @@
 #include "mongo/client/dbclient.h"
 #include "util.h"
 
-#define BATCH_BUFFER_SIZE (16*1024*1024)
+#define MAX_BATCH_BUFFER_SIZE (16*1024*1024)
+#define MONGOSYNC_PROMPT "\t[mongosync]\t"
 
 enum OplogProcessOp {
 	kClone,
@@ -51,7 +52,8 @@ struct Options {
     raw_oplog(false),
     dst_oplog_ns("sync.oplog"),
     no_index(false),
-    bg_num(10) {
+    bg_num(10),
+		batch_size(16*1024*1024) {
    }
 
 	std::string src_ip_port;
@@ -83,6 +85,7 @@ struct Options {
 	mongo::Query filter;
 
 	int32_t bg_num; //bg thread for cloning data
+	int32_t batch_size; //used for data cloning when grouping data, unit is Byte
 
   void ParseCommand(int argc, char** argv);
   void LoadConf(const std::string &conf_file);
@@ -147,7 +150,7 @@ public:
 	void CloneOplog();
 	void CloneAllDb();
 	void CloneDb(std::string db = "");
-	void CloneColl(std::string src_ns, std::string dst_ns, int32_t batch_size = BATCH_BUFFER_SIZE);
+	void CloneColl(std::string src_ns, std::string dst_ns, int32_t batch_size);
 	void SyncOplog();
 
 private:
@@ -190,8 +193,10 @@ private:
 
 	bool need_clone_db() {
 		return !opt_.raw_oplog && !opt_.db.empty() && opt_.coll.empty() && opt_.oplog_start.empty() && opt_.oplog_end.empty();
-		/*opt_.raw_oplog && (!opt_.db.empty() && opt_.coll.empty() && opt_.oplog_start.empty() && opt_.oplog_end.empty()
+		/*
+		 * opt_.raw_oplog && (!opt_.db.empty() && opt_.coll.empty() && opt_.oplog_start.empty() && opt_.oplog_end.empty()
 		 * || opt_.db.empty() && opt_.coll.empty() && opt_.oplog_start.empty() && opt_.oplog_end.empty());
+		 * 
 		 * */
 	}
 
