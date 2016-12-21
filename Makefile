@@ -29,7 +29,7 @@ LIBS = -lm \
 
 INCLUDE_PATH = -I$(DRIVER_DIR)/build/install/include/
 
-.PHONY: all driver dist_clean clean 
+.PHONY: all driver distclean clean 
 
 
 BASE_BOJS := $(wildcard ./*.cc)
@@ -57,7 +57,7 @@ $(DRIVER_LIB):
 $(OBJS): %.o : %.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@ $(INCLUDE_PATH) 
 
-dist_clean: clean
+distclean: clean
 	scons -C $(DRIVER_DIR) --ssl -c .
 
 clean: 
