@@ -489,13 +489,13 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	uint64_t total = src_conn_->count(src_ns, opt_.filter, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout), cnt = 0;
 	std::auto_ptr<mongo::DBClientCursor> cursor;
 	int32_t acc_size, percent, retries = 3;
-	uint64_t st;
+	uint64_t time_pre, time_cur;
 
 retry:
 	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL, mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk);
 	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
 	acc_size = 0, percent = 0;
-	st = time(NULL);
+	time_pre = 0;
 	try {
 		while (cursor->more()) {
 			mongo::BSONObj obj = cursor->next();
@@ -508,8 +508,12 @@ retry:
 			}
 			++cnt;
 			if (!(cnt & 0xFF)) {
-				percent = cnt * 100 / total;
-				std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "\tcloing progress: " << cnt << "/" << total << "\t" << percent << "%" << "\t(objects)" << std::endl;
+				time_cur = time(NULL);
+				if (time_cur > time_pre) {
+					percent = cnt * 100 / total;
+					std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "\tcloing progress: " << cnt << "/" << total << "\t" << percent << "%" << "\t(objects)" << std::endl;
+					time_pre = time_cur;
+				}
 			}
 		}
 		if (!batch->empty()) {
