@@ -58,7 +58,7 @@ static void Usage() {
 
 #define CHECK_ARGS_NUM() \
 	  if (argc <= idx + 1) { \
-			    LOG(ERROR) << "Wrong argument number" << std::endl; \
+			    LOG(FATAL) << "Wrong argument number" << std::endl; \
 			    Usage(); \
 			    exit(-1); \
 		} \
@@ -152,7 +152,7 @@ void Options::ParseCommand(int argc, char** argv) {
 			CHECK_ARGS_NUM();
 			log_level = argv[++idx];
 		} else {
-			LOG(ERROR) << "Unkown options" << std::endl;
+			LOG(FATAL) << "Unkown options" << std::endl;
 			Usage();
 			exit(-1);
 		}
@@ -278,22 +278,22 @@ bool Options::GetConfOplogTime(const std::string &item_key, OplogTime *value) {
 
 bool Options::ValidCheck() {
 	if (db.empty() && !coll.empty()) {
-		LOG(ERROR) << "source collection is specified, but source database not" << std::endl;
+		LOG(FATAL) << "source collection is specified, but source database not" << std::endl;
 		return false;
 	}
 
 	if (dst_db.empty() && !dst_coll.empty()) {
-		LOG(ERROR) << "destination collection is specified, but destination database not" << std::endl;
+		LOG(FATAL) << "destination collection is specified, but destination database not" << std::endl;
 		return false;
 	}
 	
 	if (!dst_coll.empty() && coll.empty()) {
-		LOG(ERROR) << "destination collection is specified, but source collection not" << std::endl;
+		LOG(FATAL) << "destination collection is specified, but source collection not" << std::endl;
 		return false;
 	}
 
 	if (db.empty() && !dst_db.empty()) {
-		LOG(ERROR) << "destination database is specified, but the source database not" << std::endl;
+		LOG(FATAL) << "destination database is specified, but the source database not" << std::endl;
 		return false;
 	}
 
@@ -337,7 +337,7 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_p
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
 	if (!conn->connect(srv_ip_port, errmsg)) {
-		LOG(ERROR) << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv: " << srv_ip_port << " failed, with errmsg: " << errmsg << std::endl;
+		LOG(FATAL) << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv: " << srv_ip_port << " failed, with errmsg: " << errmsg << std::endl;
 		delete conn;
 		return NULL;
 	}
@@ -347,7 +347,7 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_p
 
 	if (!passwd.empty()) {
 		if (!conn->auth(auth_db, user, passwd, errmsg, use_mcr)) {
-			LOG(ERROR) << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
+			LOG(FATAL) << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
 			delete conn;
 			return NULL;
 		}
@@ -549,7 +549,7 @@ retry:
 		if (retries--) {
 			goto retry;
 		} else {
-			LOG(ERROR) << "occurs exception 3 times, exit" << std::endl;
+			LOG(FATAL) << "occurs exception 3 times, exit" << std::endl;
 			exit(-1);
 		}
 	}
@@ -767,7 +767,7 @@ OplogTime MongoSync::GetSideOplogTime(mongo::DBClientConnection* conn, std::stri
 																																					<< BSON("ns" << ns.db() + ".system.indexes")
 																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
 	} else {
-		LOG(ERROR) << "get side oplog time erorr" << std::endl;
+		LOG(FATAL) << "get side oplog time erorr" << std::endl;
 		exit(-1);
 	}
 	return *reinterpret_cast<const OplogTime*>(obj["ts"].value());
@@ -789,7 +789,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 	if (version_header == "3.0." || version_header == "3.2.") {
 		mongo::BSONObj array;
 		if (!conn->runCommand(db, BSON("listCollections" << 1), tmp)) {
-			LOG(ERROR) << "get " << db << "'s collections failed" << std::endl;
+			LOG(FATAL) << "get " << db << "'s collections failed" << std::endl;
 			return -1;
 		}
 		array = tmp.getObjectField("cursor").getObjectField("firstBatch");
@@ -800,7 +800,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 	} else if (version_header == "2.4." || version_header == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor = conn->query(db + ".system.namespaces", mongo::Query().snapshot(), 0, 0, NULL, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
-			LOG(ERROR) << "get " << db << "'s collections failed" << std::endl;
+			LOG(FATAL) << "get " << db << "'s collections failed" << std::endl;
 			return -1;
 		}
 		std::string coll;
@@ -828,7 +828,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 	std::string version_header = version.substr(0, 4);
 	if (version_header == "3.0." || version_header == "3.2.") {
 		if (!conn->runCommand(ns.db(), BSON("listIndexes" << ns.coll()), tmp)) {
-			LOG(ERROR) << coll_full_name << " get indexes failed" << std::endl;
+			LOG(FATAL) << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
 		}
 		indexes = tmp.getObjectField("cursor").getObjectField("firstBatch").getOwned();
@@ -837,7 +837,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 		mongo::BSONArrayBuilder array_builder;
 		cursor = conn->query(ns.db() + ".system.indexes", mongo::Query(BSON("ns" << coll_full_name)).snapshot(), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
-			LOG(ERROR) << coll_full_name << " get indexes failed" << std::endl;
+			LOG(FATAL) << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
 		}	
 		while (cursor->more()) {

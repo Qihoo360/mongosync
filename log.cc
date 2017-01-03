@@ -29,18 +29,12 @@ struct LogMeta {
 
 LogMeta::LogMeta() {
 
-	log_level_prompts.insert(std::make_pair(kTrace, "[TRACE]"));
-	log_level_prompts.insert(std::make_pair(kDebug, "[DEBUG]"));
 	log_level_prompts.insert(std::make_pair(kInfo,  "[INFO ]"));
 	log_level_prompts.insert(std::make_pair(kWarn,  "[WARN ]"));
-	log_level_prompts.insert(std::make_pair(kError, "[ERROR]"));
 	log_level_prompts.insert(std::make_pair(kFatal, "[FATAL]"));
 
-	log_level_strs.insert(std::make_pair(kTrace, "trace"));
-	log_level_strs.insert(std::make_pair(kDebug, "debug"));
 	log_level_strs.insert(std::make_pair(kInfo,  "info" ));
 	log_level_strs.insert(std::make_pair(kWarn,  "warn" ));
-	log_level_strs.insert(std::make_pair(kError, "error"));
 	log_level_strs.insert(std::make_pair(kFatal, "fatal"));
 
 }
@@ -75,7 +69,7 @@ void Init(const LogLevel level, const std::string &log_dir, const std::string &f
 
 	std::string file_name;
 	int32_t fd;
-	for (int32_t idx = kTrace; idx < kMaxLevel; ++idx) {
+	for (int32_t idx = kInfo; idx < kMaxLevel; ++idx) {
 		file_name = file_prefix.empty() ? "" : (file_prefix + "_");
 		file_name = log_path + "/" + file_name; 
 		file_name += log_meta.log_level_strs[static_cast<LogLevel>(idx)] + ".log";
@@ -90,7 +84,7 @@ void Init(const LogLevel level, const std::string &log_dir, const std::string &f
 }
 
 static LogLevel InterpretLogLevel(const std::string level_str) {
-	for (int32_t idx = kTrace; idx < kMaxLevel; ++idx) {
+	for (int32_t idx = kInfo; idx < kMaxLevel; ++idx) {
 		if (strcasecmp(log_meta.log_level_strs[static_cast<LogLevel>(idx)].c_str(), level_str.c_str()) == 0) {
 			return static_cast<LogLevel>(idx);
 		}

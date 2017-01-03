@@ -11,26 +11,11 @@
 namespace mlog {
 
 enum LogLevel {
-	kTrace,
-	kDebug,
 	kInfo,
 	kWarn,
-	kError,
 	kFatal,
 	kMaxLevel
 };
-
-//enum {
-//	TRACE,
-//	DEBUG,
-//	INFO,
-//	WARN,
-//	ERROR,
-//	FATAL
-//};
-
-//struct LogMeta;
-//extern LogMeta log_meta;
 
 extern LogLevel work_level;
 extern pthread_mutex_t mlock;
@@ -57,11 +42,8 @@ std::string GetLevelStr();
 
 }
 
-#define TRACE   mlog::kTrace
-#define DEBUG   mlog::kDebug
 #define INFO    mlog::kInfo
 #define WARN    mlog::kWarn
-#define ERROR   mlog::kError
 #define FATAL   mlog::kFatal
 
 #define LOG(level) \
