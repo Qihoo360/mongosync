@@ -54,7 +54,6 @@ static void Usage() {
 	std::cerr << "--bg_num arg             the background thread number for cloning data(not oplog syncing and oplog storing)" << std::endl;
 	std::cerr << "--batch_size arg         the data grouping size criterion in cloning data(0-16M, default to 16M), unit is Byte" << std::endl;
 	std::cerr << "--log_level arg          specify the log level" << std::endl;
-	std::cerr << "--log_dir arg            specify the log directory" << std::endl;
 }
 
 #define CHECK_ARGS_NUM() \
@@ -152,9 +151,6 @@ void Options::ParseCommand(int argc, char** argv) {
 		} else if (strcasecmp(argv[idx], "--log_level") == 0) {
 			CHECK_ARGS_NUM();
 			log_level = argv[++idx];
-		} else if (strcasecmp(argv[idx], "--log_dir") == 0) {
-			CHECK_ARGS_NUM();
-			log_dir = argv[++idx];
 		} else {
 			LOG(ERROR) << "Unkown options" << std::endl;
 			Usage();
@@ -225,7 +221,6 @@ void Options::LoadConf(const std::string &conf_file) {
 	GetConfInt("batch_size", &batch_size);
 
 	GetConfStr("log_level", &log_level);
-	GetConfStr("log_dir", &log_dir);
 }
 
 
