@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <iomanip>
 
 #include <string.h>
 #include <stdlib.h>
@@ -408,8 +409,7 @@ void MongoSync::SyncOplog() {
 
 void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
-//	if (!opt_.db.empty() && opt_.coll.empty()) {
-	if (opt_.coll.empty()) { // both specifying db name and not specifying
+	if (/* !opt_.db.empty() &&*/ opt_.coll.empty()) { // both specifying db name and not specifying
 		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
 	} else if (!opt_.db.empty() && !opt_.coll.empty()) {
 		NamespaceString ns(opt_.db, opt_.coll);
@@ -437,14 +437,14 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 		while (!cursor->more()) {
 
 			if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
-				if (before(pre_times, cur_times)) {
+				if (!cur_times.empty() && before(pre_times, cur_times)) {
 					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 				}
 				return;
 			}
 
 			if (!waiting) {
-				if (before(pre_times, cur_times)) {
+				if (!cur_times.empty() && before(pre_times, cur_times)) {
 					pre_times = cur_times;	
 					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 				}
@@ -461,7 +461,7 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 			memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));
 		}
 		time(&cur);
-		if (cur > pre && before(pre_times, cur_times)) {
+		if (cur > pre && !cur_times.empty() && before(pre_times, cur_times)) {
 			pre = cur;
 			pre_times = cur_times;
 			LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
@@ -496,13 +496,13 @@ void MongoSync::CloneDb(std::string db) {
 	}
 
 	std::string dst_db = opt_.dst_db.empty() ? db : opt_.dst_db;
-  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning db: " << db << " ----> " << dst_db << std::endl;
+  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning db: " << db << " ----> " << dst_db << "\n" << std::endl;
 	for (std::vector<std::string>::const_iterator iter = colls.begin();
 			iter != colls.end();
 			++iter) {
 		CloneColl(db + "." + *iter, dst_db + "." + *iter, opt_.batch_size);
 	}
-  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone db: " << db << " ----> " << dst_db << " finished" << std::endl;
+  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone db: " << db << " ----> " << dst_db << " finished\n" << std::endl;
 }
 
 void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size) {
@@ -513,12 +513,15 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	std::auto_ptr<mongo::DBClientCursor> cursor;
 	int32_t acc_size, percent, retries = 3;
 	uint64_t time_pre, time_cur;
+	char buf[32];
 
 retry:
 	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL, mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk);
 	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
-	acc_size = 0, percent = 0;
+	acc_size = 0;
+	percent = 0;
 	time_pre = 0;
+	cnt = 0;
 	try {
 		while (cursor->more()) {
 			mongo::BSONObj obj = cursor->next();
@@ -534,7 +537,8 @@ retry:
 				time_cur = time(NULL);
 				if (time_cur > time_pre) {
 					percent = cnt * 100 / total;
-					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "\tcloing progress: " << cnt << "/" << total << "\t" << percent << "%" << "\t(objects)" << std::endl;
+					snprintf(buf, sizeof(buf), "%d/%d", cnt, total);
+					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloing progress: " << std::setfill(' ') << std::setw(20) << buf << "\t"<< percent << "%" << "\t(objects)" << std::endl;
 					time_pre = time_cur;
 				}
 			}
@@ -558,7 +562,7 @@ retry:
     sleep(1);
   }
 
-	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone "	<< src_ns << " to " << dst_ns << " success, total " << total << "objects" << std::endl;
+	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone "	<< src_ns << " to " << dst_ns << " success, total " << cnt << " objects\n" << std::endl;
 	if (!opt_.no_index) {
 		CloneCollIndex(src_ns, dst_ns);
 	}
@@ -588,7 +592,7 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 		builder << "ns" << dns;
 		SetCollIndexesByVersion(dst_conn_, dst_version_, dns, builder.obj());
 	}
-	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone " << sns << " indexes success, total " << indexes_num << "objects" << std::endl;
+	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone " << sns << " indexes success, total " << indexes_num << "objects\n" << std::endl;
 }
 
 bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op) {
