@@ -4,6 +4,7 @@
 
 #include "mongo/client/dbclient.h"
 #include "util.h"
+#include "log.h"
 
 #define MAX_BATCH_BUFFER_SIZE (16*1024*1024)
 #define MONGOSYNC_PROMPT "\t[mongosync]\t"
@@ -86,6 +87,9 @@ struct Options {
 
 	int32_t bg_num; //bg thread for cloning data
 	int32_t batch_size; //used for data cloning when grouping data, unit is Byte
+
+	std::string log_level;
+	std::string log_dir;
 
   void ParseCommand(int argc, char** argv);
   void LoadConf(const std::string &conf_file);

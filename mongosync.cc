@@ -53,14 +53,16 @@ static void Usage() {
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
 	std::cerr << "--bg_num arg             the background thread number for cloning data(not oplog syncing and oplog storing)" << std::endl;
 	std::cerr << "--batch_size arg         the data grouping size criterion in cloning data(0-16M, default to 16M), unit is Byte" << std::endl;
+	std::cerr << "--log_level arg          specify the log level" << std::endl;
+	std::cerr << "--log_dir arg            specify the log directory" << std::endl;
 }
 
 #define CHECK_ARGS_NUM() \
 	  if (argc <= idx + 1) { \
-			    std::cerr << "[ERROR]\tWrong argument number" << std::endl; \
+			    LOG(ERROR) << "Wrong argument number" << std::endl; \
 			    Usage(); \
 			    exit(-1); \
-			  } \
+		} \
   	while(0)
 
 void Options::ParseCommand(int argc, char** argv) {
@@ -144,11 +146,17 @@ void Options::ParseCommand(int argc, char** argv) {
 			CHECK_ARGS_NUM();
 			batch_size = atoi(argv[++idx]);
 			if (batch_size < 0 || batch_size > MAX_BATCH_BUFFER_SIZE) {
-				std::cerr << "[WARN]\tThe batch size specified is beyond the range, set to " << MAX_BATCH_BUFFER_SIZE << std::endl;
+				LOG(WARN) << "The batch size specified is beyond the range, set to " << MAX_BATCH_BUFFER_SIZE << std::endl;
 				batch_size = MAX_BATCH_BUFFER_SIZE;
 			}
+		} else if (strcasecmp(argv[idx], "--log_level") == 0) {
+			CHECK_ARGS_NUM();
+			log_level = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--log_dir") == 0) {
+			CHECK_ARGS_NUM();
+			log_dir = argv[++idx];
 		} else {
-			std::cerr << "[ERROR]\tUnkown options" << std::endl;
+			LOG(ERROR) << "Unkown options" << std::endl;
 			Usage();
 			exit(-1);
 		}
@@ -159,7 +167,7 @@ void Options::ParseCommand(int argc, char** argv) {
 void Options::LoadConf(const std::string &conf_file) {
   std::ifstream in(conf_file.c_str());
   if (!in.good()) {
-    std::cerr << "[ERROR]\tcannot open the specified conf file" << std::endl;
+		LOG(FATAL) << "cannot open the specified conf file" << std::endl;
     exit(-1);
   }
   std::string line, item_key, item_value;
@@ -175,7 +183,7 @@ void Options::LoadConf(const std::string &conf_file) {
     }
     if ((pos = line.find("=")) == std::string::npos
         || pos == (line.size() - 1)) {
-      std::cerr << "[WARN]\terror item format at " << line_no << "line in " << conf_file << std::endl;
+      LOG(WARN) << "error item format at " << line_no << "line in " << conf_file << std::endl;
       continue;
     }
 
@@ -215,6 +223,9 @@ void Options::LoadConf(const std::string &conf_file) {
 
 	GetConfInt("bg_num", &bg_num);
 	GetConfInt("batch_size", &batch_size);
+
+	GetConfStr("log_level", &log_level);
+	GetConfStr("log_dir", &log_dir);
 }
 
 
@@ -234,7 +245,7 @@ bool Options::GetConfBool(const std::string &item_key, bool *value) {
   } else if (strcasecmp(iter->second.c_str(), "off") == 0) {
     *value = false;
   } else {
-    std::cerr << "[WARN]\t" << item_key << " item in conf file is not BOOL" << std::endl;
+    LOG(WARN) << item_key << " item in conf file is not BOOL" << std::endl;
     return false;
   }
   return true;
@@ -272,22 +283,22 @@ bool Options::GetConfOplogTime(const std::string &item_key, OplogTime *value) {
 
 bool Options::ValidCheck() {
 	if (db.empty() && !coll.empty()) {
-		std::cerr << "[ERROR]\tsource collection is specified, but source database not" << std::endl;
+		LOG(ERROR) << "source collection is specified, but source database not" << std::endl;
 		return false;
 	}
 
 	if (dst_db.empty() && !dst_coll.empty()) {
-		std::cerr << "[ERROR]\tdestination collection is specified, but destination database not" << std::endl;
+		LOG(ERROR) << "destination collection is specified, but destination database not" << std::endl;
 		return false;
 	}
 	
 	if (!dst_coll.empty() && coll.empty()) {
-		std::cerr << "[ERROR]\tdestination collection is specified, but source collection not" << std::endl;
+		LOG(ERROR) << "destination collection is specified, but source collection not" << std::endl;
 		return false;
 	}
 
 	if (db.empty() && !dst_db.empty()) {
-		std::cerr << "[ERROR]\tdestination database is specified, but the source database not" << std::endl;
+		LOG(ERROR) << "destination database is specified, but the source database not" << std::endl;
 		return false;
 	}
 
@@ -331,22 +342,22 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_p
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
 	if (!conn->connect(srv_ip_port, errmsg)) {
-		std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv: " << srv_ip_port << " failed, with errmsg: " << errmsg << std::endl;
+		LOG(ERROR) << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv: " << srv_ip_port << " failed, with errmsg: " << errmsg << std::endl;
 		delete conn;
 		return NULL;
 	}
   if (!bg) {
-    std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
+    LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
   }
 
 	if (!passwd.empty()) {
 		if (!conn->auth(auth_db, user, passwd, errmsg, use_mcr)) {
-			std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
+			LOG(ERROR) << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
 			delete conn;
 			return NULL;
 		}
     if (!bg) {
-		  std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
+		  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
     }
 	}
 	return conn;
@@ -432,7 +443,7 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 
 			if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
 				if (before(pre_times, cur_times)) {
-					std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
+					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 				}
 				return;
 			}
@@ -440,9 +451,9 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 			if (!waiting) {
 				if (before(pre_times, cur_times)) {
 					pre_times = cur_times;	
-					std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
+					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 				}
-				std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "waiting for new data..." << std::endl;
+				LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "waiting for new data..." << std::endl;
 				waiting = true;
 			}
 
@@ -458,7 +469,7 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 		if (cur > pre && before(pre_times, cur_times)) {
 			pre = cur;
 			pre_times = cur_times;
-			std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
+			LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 		}
 	}
 }
@@ -490,19 +501,19 @@ void MongoSync::CloneDb(std::string db) {
 	}
 
 	std::string dst_db = opt_.dst_db.empty() ? db : opt_.dst_db;
-  std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning db: " << db << " ----> " << dst_db << std::endl;
+  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning db: " << db << " ----> " << dst_db << std::endl;
 	for (std::vector<std::string>::const_iterator iter = colls.begin();
 			iter != colls.end();
 			++iter) {
 		CloneColl(db + "." + *iter, dst_db + "." + *iter, opt_.batch_size);
 	}
-  std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone db: " << db << " ----> " << dst_db << " finished" << std::endl;
+  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone db: " << db << " ----> " << dst_db << " finished" << std::endl;
 }
 
 void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size) {
 //	std::string src_ns = opt_.db + "." + opt_.coll;
 //	std::string dst_ns = (opt_.dst_db.empty() ? opt_.db : opt_.dst_db) + "." + (opt_.dst_coll.empty() ? opt_.coll : opt_.dst_coll);
-	std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning "	<< src_ns << " to " << dst_ns << std::endl;
+	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning "	<< src_ns << " to " << dst_ns << std::endl;
 	uint64_t total = src_conn_->count(src_ns, opt_.filter, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout), cnt = 0;
 	std::auto_ptr<mongo::DBClientCursor> cursor;
 	int32_t acc_size, percent, retries = 3;
@@ -528,7 +539,7 @@ retry:
 				time_cur = time(NULL);
 				if (time_cur > time_pre) {
 					percent = cnt * 100 / total;
-					std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "\tcloing progress: " << cnt << "/" << total << "\t" << percent << "%" << "\t(objects)" << std::endl;
+					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "\tcloing progress: " << cnt << "/" << total << "\t" << percent << "%" << "\t(objects)" << std::endl;
 					time_pre = time_cur;
 				}
 			}
@@ -538,12 +549,12 @@ retry:
   	  bg_thread_group_.AddWriteUnit(dst_ns, batch);
 		}
 	} catch (mongo::DBException &e) {
-		std::cerr << "[WARN]\toccurs exception: " << e.toString() << ", retry it" << std::endl;
+		LOG(WARN) << "exception occurs: " << e.toString() << ", retry it" << std::endl;
 		delete batch;
 		if (retries--) {
 			goto retry;
 		} else {
-			std::cerr << "[ERROR]\toccurs exception 3 times, exit" << std::endl;
+			LOG(ERROR) << "occurs exception 3 times, exit" << std::endl;
 			exit(-1);
 		}
 	}
@@ -552,14 +563,14 @@ retry:
     sleep(1);
   }
 
-	std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone "	<< src_ns << " to " << dst_ns << " success, total " << total << "objects" << std::endl;
+	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone "	<< src_ns << " to " << dst_ns << " success, total " << total << "objects" << std::endl;
 	if (!opt_.no_index) {
 		CloneCollIndex(src_ns, dst_ns);
 	}
 }
 
 void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
-	std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning " << sns << " indexes" << std::endl;
+	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning " << sns << " indexes" << std::endl;
 	mongo::BSONObj indexes;
 	if (GetCollIndexesByVersion(src_conn_, src_version_, sns, indexes) == -1) {
 		return;
@@ -582,7 +593,7 @@ void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
 		builder << "ns" << dns;
 		SetCollIndexesByVersion(dst_conn_, dst_version_, dns, builder.obj());
 	}
-	std::cerr << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone " << sns << " indexes success, total " << indexes_num << "objects" << std::endl;
+	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone " << sns << " indexes success, total " << indexes_num << "objects" << std::endl;
 }
 
 bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op) {
@@ -744,7 +755,7 @@ void MongoSync::ApplyCmdOplog(std::string dst_db, const std::string& dst_coll, c
 	}
 	std::string str = obj.toString();
 	if (!dst_conn_->runCommand(dst_db, obj, tmp)) {
-		std::cerr << "[WARN]\tadministration oplog sync failed, with oplog: " << obj.toString() << ", errms: " << tmp << std::endl;
+		LOG(WARN) << "administration oplog sync failed, with oplog: " << obj.toString() << ", errms: " << tmp << std::endl;
 	}
 }
 
@@ -761,7 +772,7 @@ OplogTime MongoSync::GetSideOplogTime(mongo::DBClientConnection* conn, std::stri
 																																					<< BSON("ns" << ns.db() + ".system.indexes")
 																																					<< BSON("ns" << ns.db() + ".system.cmd")))).sort("$natural", order), NULL, mongo::QueryOption_SlaveOk);
 	} else {
-		std::cerr << "[ERROR]\tget side oplog time erorr" << std::endl;
+		LOG(ERROR) << "get side oplog time erorr" << std::endl;
 		exit(-1);
 	}
 	return *reinterpret_cast<const OplogTime*>(obj["ts"].value());
@@ -783,7 +794,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 	if (version_header == "3.0." || version_header == "3.2.") {
 		mongo::BSONObj array;
 		if (!conn->runCommand(db, BSON("listCollections" << 1), tmp)) {
-			std::cerr << "[ERROR]\tget " << db << "'s collections failed" << std::endl;
+			LOG(ERROR) << "get " << db << "'s collections failed" << std::endl;
 			return -1;
 		}
 		array = tmp.getObjectField("cursor").getObjectField("firstBatch");
@@ -794,7 +805,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 	} else if (version_header == "2.4." || version_header == "2.6.") {
 		std::auto_ptr<mongo::DBClientCursor> cursor = conn->query(db + ".system.namespaces", mongo::Query().snapshot(), 0, 0, NULL, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
-			std::cerr << "[ERROR]\tget " << db << "'s collections failed" << std::endl;
+			LOG(ERROR) << "get " << db << "'s collections failed" << std::endl;
 			return -1;
 		}
 		std::string coll;
@@ -810,7 +821,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 			colls.push_back(coll.substr(coll.find(".")+1));
 		}	
 	} else {
-		std::cerr << "[ERROR]\t" << version << " is not supported" << std::endl;
+		LOG(FATAL) << "version: " << version << " is not supported" << std::endl;
 		exit(-1);
 	}
 	return 0;
@@ -822,7 +833,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 	std::string version_header = version.substr(0, 4);
 	if (version_header == "3.0." || version_header == "3.2.") {
 		if (!conn->runCommand(ns.db(), BSON("listIndexes" << ns.coll()), tmp)) {
-			std::cerr << "[ERROR]\t" << coll_full_name << " get indexes failed" << std::endl;
+			LOG(ERROR) << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
 		}
 		indexes = tmp.getObjectField("cursor").getObjectField("firstBatch").getOwned();
@@ -831,7 +842,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 		mongo::BSONArrayBuilder array_builder;
 		cursor = conn->query(ns.db() + ".system.indexes", mongo::Query(BSON("ns" << coll_full_name)).snapshot(), 0, 0, 0, mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 		if (cursor.get() == NULL) {
-			std::cerr << "[ERROR]\t" << coll_full_name << " get indexes failed" << std::endl;
+			LOG(ERROR) << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
 		}	
 		while (cursor->more()) {
@@ -840,7 +851,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 		}
 		indexes = array_builder.arr();
 	} else {
-		std::cerr << "[ERROR]\tversion: " << version << " is not surpported" << std::endl;
+		LOG(FATAL) << "version: " << version << " is not surpported" << std::endl;
 		exit(-1);
 	}
 	return 0;
@@ -855,7 +866,7 @@ void MongoSync::SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::st
 	} else if (version_header == "2.4." || version_header == "2.6.") {
 		conn->insert(ns.db() + ".system.indexes", index, 0, &mongo::WriteConcern::unacknowledged);	
 	} else {
-		std::cerr << "[ERROR]\tversion: " << version << " is not surpported" << std::endl;
+		LOG(FATAL) << "version: " << version << " is not surpported" << std::endl;
 		exit(-1);
 	}
 }

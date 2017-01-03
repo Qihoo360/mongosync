@@ -47,6 +47,47 @@ std::string GetFormatTime(time_t t) { // Output format is: Aug 23 14:55:02 2001
 	return std::string(buf);
 }
 
+static int DoCreatePath(const char *path, mode_t mode) {
+  struct stat st;
+  int status = 0;
+
+  if (stat(path, &st) != 0) {
+    /* Directory does not exist. EEXIST for race
+     * condition */
+    if (mkdir(path, mode) != 0 && errno != EEXIST)
+      status = -1;
+  } else if (!S_ISDIR(st.st_mode)) {
+    errno = ENOTDIR;
+    status = -1;
+  }
+
+  return (status);
+}
+
+int CreatePath(const std::string &path, mode_t mode) {
+  char           *pp;
+  char           *sp;
+  int             status;
+  char           *copypath = strdup(path.c_str());
+
+  status = 0;
+  pp = copypath;
+  while (status == 0 && (sp = strchr(pp, '/')) != 0) {
+    if (sp != pp) {
+      /* Neither root nor double slash in path */
+      *sp = '\0';
+      status = DoCreatePath(copypath, mode);
+      *sp = '/';
+    }
+    pp = sp + 1;
+  }
+  if (status == 0)
+    status = DoCreatePath(path.c_str(), mode);
+  free(copypath);
+  return (status);
+}
+
+
 /*******************************************************************************************/
 
 BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const int32_t bg_thread_num)
