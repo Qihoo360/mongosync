@@ -73,7 +73,7 @@ Rough testing under the situation:
 * total about **36,400,000** documents；
 * database size about **1.09GB**
 
-transfering time is about **379 seconds**(even qps: 10w).
+transfering time is about **379 seconds**(even qps: 96.04k).
 
 **SP**: The bottleneck is writing, So using multiple threads(multi-conn) to accelerate the speed of that(but also limited by database server's writing speed). 
 
