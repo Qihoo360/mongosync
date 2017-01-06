@@ -4,7 +4,7 @@ CXXFLAGS = -O3 -g
 
 OBJECT = mongosync
 OUTPUT = ./output
-DRIVER_DIR = ./dep/mongo-cxx-driver-legacy-1.0.0
+DRIVER_DIR = ./dep/mongo-cxx-driver
 DRIVER_LIB = $(DRIVER_DIR)/build/install/lib/libmongoclient.a
 
 CPU_NUM = $(shell cat /proc/cpuinfo | grep CPU | wc -l)
