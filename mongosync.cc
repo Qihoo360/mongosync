@@ -54,7 +54,7 @@ static void Usage() {
 	std::cerr << "--filter arg             the bson format string used to filter the records to be transfered" << std::endl;
 	std::cerr << "--bg_num arg             the background thread number for cloning data(not oplog syncing and oplog storing)" << std::endl;
 	std::cerr << "--batch_size arg         the data grouping size criterion in cloning data(0-16M, default to 16M), unit is Byte" << std::endl;
-	std::cerr << "--log_level arg          specify the log level" << std::endl;
+	std::cerr << "--log_level arg          specify the log level(INFO, WARN, FATAL)" << std::endl;
 }
 
 #define CHECK_ARGS_NUM() \
