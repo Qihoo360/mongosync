@@ -1,5 +1,7 @@
 # README
 
+[中文wiki前往](https://github.com/Qihoo360/mongosync/wiki)
+
 ## 1.Introduction 
 
 This simpe program is for transfering data between two mongo nodes, including:
@@ -26,9 +28,9 @@ This simpe program is for transfering data between two mongo nodes, including:
 
   after that, a "mongosync" named execution file appears in the $(MONGOSYNC_ROOT)/output directory, and also a "mongosync.conf" named config file
 
-  *SP:**
+  *SP:*
 
-  a. maybe some depenncies not installed in your machine, install them according to the tips（mostly boost libarary is needed）
+  a. maybe some depenncies not installed in your machine, install them according to the tips（mostly sons, boost and ssl is needed）
 
   b. don't use c++11 to compile this program, otherwise will occur error
 
