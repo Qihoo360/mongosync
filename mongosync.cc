@@ -515,6 +515,10 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	uint64_t time_pre, time_cur;
 	char buf[32];
 
+	if (!opt_.no_index) {
+		CloneCollIndex(src_ns, dst_ns);
+	}
+
 retry:
 	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL, mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk);
 	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
@@ -563,9 +567,6 @@ retry:
   }
 
 	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone "	<< src_ns << " to " << dst_ns << " success, total " << cnt << " objects\n" << std::endl;
-	if (!opt_.no_index) {
-		CloneCollIndex(src_ns, dst_ns);
-	}
 }
 
 void MongoSync::CloneCollIndex(std::string sns, std::string dns) {
@@ -814,7 +815,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 			if (mongoutils::str::endsWith(coll.c_str(), ".system.namespaces") 
 					|| mongoutils::str::endsWith(coll.c_str(), ".system.users") 
 					|| mongoutils::str::endsWith(coll.c_str(), ".system.indexes")
-          || coll.substr(coll.rfind("."), 2) == ".$") {
+          || coll.find(".$") != std::string::npos) {
 				continue;
 			}
 			colls.push_back(coll.substr(coll.find(".")+1));
