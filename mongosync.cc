@@ -754,7 +754,7 @@ void MongoSync::ApplyCmdOplog(std::string dst_db, const std::string& dst_coll, c
 		obj = build.obj();
 	}
 	std::string str = obj.toString();
-	if (!dst_conn_->runCommand(dst_db, obj, tmp)) {
+	if (!dst_conn_->runCommand(dst_db, obj, tmp, mongo::QueryOption_SlaveOk)) {
 		LOG(WARN) << "administration oplog sync failed, with oplog: " << obj.toString() << ", errms: " << tmp << std::endl;
 	}
 }
@@ -793,7 +793,7 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 	mongo::BSONObj tmp;
 	if (version_header == "3.0." || version_header == "3.2.") {
 		mongo::BSONObj array;
-		if (!conn->runCommand(db, BSON("listCollections" << 1), tmp)) {
+		if (!conn->runCommand(db, BSON("listCollections" << 1), tmp, mongo::QueryOption_SlaveOk)) {
 			LOG(FATAL) << "get " << db << "'s collections failed" << std::endl;
 			return -1;
 		}
@@ -832,7 +832,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 	mongo::BSONObj tmp;
 	std::string version_header = version.substr(0, 4);
 	if (version_header == "3.0." || version_header == "3.2.") {
-		if (!conn->runCommand(ns.db(), BSON("listIndexes" << ns.coll()), tmp)) {
+		if (!conn->runCommand(ns.db(), BSON("listIndexes" << ns.coll()), tmp, mongo::QueryOption_SlaveOk)) {
 			LOG(FATAL) << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
 		}
@@ -862,7 +862,7 @@ void MongoSync::SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::st
 	NamespaceString ns(coll_full_name);
 	if (version_header == "3.0." || version_header == "3.2.") {
 		mongo::BSONObj tmp;
-		conn->runCommand(ns.db(), BSON("createIndexes" << ns.coll() << "indexes" << BSON_ARRAY(index)), tmp);
+		conn->runCommand(ns.db(), BSON("createIndexes" << ns.coll() << "indexes" << BSON_ARRAY(index)), tmp, mongo::QueryOption_SlaveOk);
 	} else if (version_header == "2.4." || version_header == "2.6.") {
 		conn->insert(ns.db() + ".system.indexes", index, 0, &mongo::WriteConcern::unacknowledged);	
 	} else {
