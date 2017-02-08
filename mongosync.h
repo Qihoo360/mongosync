@@ -62,7 +62,7 @@ struct Options {
 	std::string src_passwd;
 	std::string src_auth_db;
 	bool src_use_mcr;
-  std::string src_type;
+  bool is_mongos;
 
   std::string shard_user;
   std::string shard_passwd;
@@ -72,7 +72,6 @@ struct Options {
 	std::string dst_passwd;
 	std::string dst_auth_db;
 	bool dst_use_mcr;
-  std::string dst_type;
 
 //the database or collection to be transfered	
 	std::string db;
@@ -155,8 +154,11 @@ public:
 	~MongoSync();
 	int32_t InitConn();
 
-	void Process();
+  // Used when sourse is mongos
   std::vector<std::string> GetShards();
+  void StopBalancer();
+
+	void Process();
 	void CloneOplog();
 	void CloneAllDb();
 	void CloneDb(std::string db = "");

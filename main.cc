@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
 	}
 
   // mongos -> mongos
-  if (opt.src_type == "mongos") {
+  if (opt.is_mongos) {
     if (opt.shard_user.empty() || opt.shard_passwd.empty()) {
       LOG(FATAL)
         << "Shard username or password should not be empty when src is mongos\n"
@@ -61,6 +61,7 @@ int main(int argc, char *argv[]) {
       return -1;
     }
     std::vector<std::string> shards = mongosync->GetShards();
+    mongosync->StopBalancer();
     delete mongosync;
 
     // Create connection between shard and dst mongos

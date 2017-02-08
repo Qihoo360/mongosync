@@ -198,10 +198,10 @@ void Options::LoadConf(const std::string &conf_file) {
   GetConfStr("src_passwd", &src_passwd);
   GetConfStr("src_auth_db", &src_auth_db);
   GetConfBool("src_use_mcr", &src_use_mcr);
-  GetConfStr("src_type", &src_type);
   GetConfStr("db", &db);
   GetConfStr("coll", &coll);
 
+  GetConfBool("is_mongos", &is_mongos);
   GetConfStr("shard_user", &shard_user);
   GetConfStr("shard_passwd", &shard_passwd);
 
@@ -210,7 +210,6 @@ void Options::LoadConf(const std::string &conf_file) {
   GetConfStr("dst_passwd", &dst_passwd);
   GetConfStr("dst_auth_db", &dst_auth_db);
   GetConfBool("dst_use_mcr", &dst_use_mcr);
-  GetConfStr("dst_type", &dst_type);
   GetConfStr("dst_db", &dst_db);
   GetConfStr("dst_coll", &dst_coll);
 
@@ -375,37 +374,36 @@ int32_t MongoSync::InitConn() {
 }
 
 std::vector<std::string> MongoSync::GetShards() {
-    std::vector<std::string> shards;
-    std::auto_ptr<mongo::DBClientCursor> cursor = \
-      src_conn_->query("config.shards",
-                       mongo::Query().snapshot(), 0, 0, NULL,
-                       mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
-    if (cursor.get() == NULL) {
-      return shards;
-    }
-    mongo::BSONObj tmp;
-    while (cursor->more()) {
-      tmp = cursor->next();
-      std::string shard = tmp.getStringField("host");
-      size_t pos = shard.find(',');
-      shard = shard.substr(0, pos);
-      shards.push_back(shard);
-    }
+  std::vector<std::string> shards;
+  std::auto_ptr<mongo::DBClientCursor> cursor = \
+    src_conn_->query("config.shards",
+                     mongo::Query().snapshot(), 0, 0, NULL,
+                     mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
+  if (cursor.get() == NULL) {
     return shards;
+  }
+  mongo::BSONObj tmp;
+  while (cursor->more()) {
+    tmp = cursor->next();
+    std::string shard = tmp.getStringField("host");
+    size_t pos = shard.find(',');
+    shard = shard.substr(0, pos);
+    shards.push_back(shard);
+  }
+  return shards;
+}
+
+void MongoSync::StopBalancer() {
+  // Stop Balancer if src is mongos
+  src_conn_->update("config.settings",
+                    mongo::Query(BSON("_id" << "balancer")),
+                    BSON("$set" << BSON("stopped" << "true")),
+                    true);
+
+  // TODO gaodq, 清除balancer未删除的垃圾数据
 }
 
 void MongoSync::Process() {
-  if (opt_.src_type == "mongos") {
-    // Stop Balancer if src is mongos
-    src_conn_->update("config.settings",
-                      mongo::Query(BSON("_id" << "balancer")),
-                      BSON("$set" << BSON("stopped" << "true")),
-                      true);
-
-    // TODO gaodq, 清除balancer未删除的垃圾数据
-  }
-
-
   if (need_sync_oplog()) {
     oplog_begin_ = opt_.oplog_start;
     if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
@@ -515,7 +513,9 @@ void MongoSync::CloneAllDb() {
 
 	for (std::set<std::string>::iterator iter = fields.begin(); iter != fields.end(); ++iter) {
 		db = obj.getObjectField(*iter).getStringField("name");
-		if (db == "admin" || db == "local") {
+		if (db == "admin" ||
+        db == "local" ||
+        db == "config") {
 			continue;
 		}
 		CloneDb(db);
@@ -851,10 +851,8 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 		while (cursor->more()) {
 			tmp = cursor->next();
 			coll = tmp.getStringField("name");
-			if (mongoutils::str::endsWith(coll.c_str(), ".system.namespaces") 
-					|| mongoutils::str::endsWith(coll.c_str(), ".system.users") 
-					|| mongoutils::str::endsWith(coll.c_str(), ".system.indexes")
-          || coll.substr(coll.rfind("."), 2) == ".$") {
+      if (mongoutils::str::contains(coll, ".system.") ||
+          mongoutils::str::contains(coll, ".$")) {
 				continue;
 			}
 			colls.push_back(coll.substr(coll.find(".")+1));
