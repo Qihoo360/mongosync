@@ -198,14 +198,19 @@ void Options::LoadConf(const std::string &conf_file) {
   GetConfStr("src_passwd", &src_passwd);
   GetConfStr("src_auth_db", &src_auth_db);
   GetConfBool("src_use_mcr", &src_use_mcr);
+  GetConfStr("src_type", &src_type);
   GetConfStr("db", &db);
   GetConfStr("coll", &coll);
+
+  GetConfStr("shard_user", &shard_user);
+  GetConfStr("shard_passwd", &shard_passwd);
 
   GetConfStr("dst_srv", &dst_ip_port);
   GetConfStr("dst_user", &dst_user);
   GetConfStr("dst_passwd", &dst_passwd);
   GetConfStr("dst_auth_db", &dst_auth_db);
   GetConfBool("dst_use_mcr", &dst_use_mcr);
+  GetConfStr("dst_type", &dst_type);
   GetConfStr("dst_db", &dst_db);
   GetConfStr("dst_coll", &dst_coll);
 
@@ -302,16 +307,16 @@ bool Options::ValidCheck() {
 }
 
 
-MongoSync::MongoSync(const Options& opt) 
-	: opt_(opt),
+MongoSync::MongoSync(const Options *opt)
+	: opt_(*opt),
 	src_conn_(NULL),
 	dst_conn_(NULL),
-	bg_thread_group_(opt.dst_ip_port,
-			             opt.dst_auth_db,
-									 opt.dst_user,
-									 opt.dst_passwd,
-									 opt.dst_use_mcr,
-									 opt.bg_num) {
+	bg_thread_group_(opt->dst_ip_port,
+			             opt->dst_auth_db,
+									 opt->dst_user,
+									 opt->dst_passwd,
+									 opt->dst_use_mcr,
+									 opt->bg_num) {
 }
 
 
@@ -324,7 +329,7 @@ MongoSync::~MongoSync() {
 	}
 }
 
-MongoSync* MongoSync::NewMongoSync(const Options& opt) {
+MongoSync* MongoSync::NewMongoSync(const Options *opt) {
 	MongoSync* mongosync = new MongoSync(opt);
 	if (mongosync->InitConn() == -1) {
 		delete mongosync;
@@ -369,15 +374,47 @@ int32_t MongoSync::InitConn() {
 	return 0;
 }
 
+std::vector<std::string> MongoSync::GetShards() {
+    std::vector<std::string> shards;
+    std::auto_ptr<mongo::DBClientCursor> cursor = \
+      src_conn_->query("config.shards",
+                       mongo::Query().snapshot(), 0, 0, NULL,
+                       mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
+    if (cursor.get() == NULL) {
+      return shards;
+    }
+    mongo::BSONObj tmp;
+    while (cursor->more()) {
+      tmp = cursor->next();
+      std::string shard = tmp.getStringField("host");
+      size_t pos = shard.find(',');
+      shard = shard.substr(0, pos);
+      shards.push_back(shard);
+    }
+    return shards;
+}
+
 void MongoSync::Process() {
-	oplog_begin_ = opt_.oplog_start;
-	if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
-//		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, false);
-		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
-	} else if (opt_.oplog_start.empty()) {
-		oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
-	}
-	oplog_finish_ = opt_.oplog_end;
+  if (opt_.src_type == "mongos") {
+    // Stop Balancer if src is mongos
+    src_conn_->update("config.settings",
+                      mongo::Query(BSON("_id" << "balancer")),
+                      BSON("$set" << BSON("stopped" << "true")),
+                      true);
+
+    // TODO gaodq, 清除balancer未删除的垃圾数据
+  }
+
+
+  if (need_sync_oplog()) {
+    oplog_begin_ = opt_.oplog_start;
+    if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
+      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
+    } else if (opt_.oplog_start.empty()) {
+      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
+    }
+    oplog_finish_ = opt_.oplog_end;
+  }
 
 	if (need_clone_oplog()) {
 		CloneOplog();
@@ -515,6 +552,12 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 	uint64_t time_pre, time_cur;
 	char buf[32];
 
+  // Clone index
+	if (!opt_.no_index) {
+		CloneCollIndex(src_ns, dst_ns);
+	}
+
+  // Clone record
 retry:
 	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL, mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk);
 	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
@@ -563,9 +606,6 @@ retry:
   }
 
 	LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "clone "	<< src_ns << " to " << dst_ns << " success, total " << cnt << " objects\n" << std::endl;
-	if (!opt_.no_index) {
-		CloneCollIndex(src_ns, dst_ns);
-	}
 }
 
 void MongoSync::CloneCollIndex(std::string sns, std::string dns) {

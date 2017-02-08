@@ -62,12 +62,17 @@ struct Options {
 	std::string src_passwd;
 	std::string src_auth_db;
 	bool src_use_mcr;
+  std::string src_type;
+
+  std::string shard_user;
+  std::string shard_passwd;
 
 	std::string dst_ip_port;
 	std::string dst_user;
 	std::string dst_passwd;
 	std::string dst_auth_db;
 	bool dst_use_mcr;
+  std::string dst_type;
 
 //the database or collection to be transfered	
 	std::string db;
@@ -144,13 +149,14 @@ private:
 
 class MongoSync {
 public:
-	static MongoSync* NewMongoSync(const Options& opt);
+	static MongoSync* NewMongoSync(const Options *opt);
 	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const bool bg = false);
-	MongoSync(const Options& opt);
+	MongoSync(const Options *opt);
 	~MongoSync();
 	int32_t InitConn();
 
 	void Process();
+  std::vector<std::string> GetShards();
 	void CloneOplog();
 	void CloneAllDb();
 	void CloneDb(std::string db = "");
