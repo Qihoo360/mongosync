@@ -77,6 +77,7 @@ struct Options {
 	std::string db;
 	std::string dst_db;
 	std::string coll;
+	std::string colls;
 	std::string dst_coll;
 
 	bool oplog;

@@ -200,6 +200,7 @@ void Options::LoadConf(const std::string &conf_file) {
   GetConfBool("src_use_mcr", &src_use_mcr);
   GetConfStr("db", &db);
   GetConfStr("coll", &coll);
+  GetConfStr("colls", &colls);
 
   GetConfBool("is_mongos", &is_mongos);
   GetConfStr("shard_user", &shard_user);
@@ -527,10 +528,12 @@ void MongoSync::CloneDb(std::string db) {
 		db = opt_.db;
 	}
 
-	std::vector<std::string> colls;		
-	if (GetAllCollByVersion(src_conn_, src_version_, db, colls) == -1) { // get collections failed
-		return;
-	}
+	std::vector<std::string> colls;
+  if (!opt_.colls.empty()) {
+    colls = util::Split(opt_.colls, ',');
+  } else if (GetAllCollByVersion(src_conn_, src_version_, db, colls) == -1) { // get collections failed
+    return;
+  }
 
 	std::string dst_db = opt_.dst_db.empty() ? db : opt_.dst_db;
   LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "cloning db: " << db << " ----> " << dst_db << "\n" << std::endl;
