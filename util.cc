@@ -31,6 +31,26 @@ std::string Trim(const std::string &str, const std::string del_str) {
   return str.substr(begin, end-begin+1);
 }
 
+std::vector<std::string> Split(const std::string &str, const char delimeter) {
+  size_t bpos = 0;
+  std::vector<std::string> colls;
+  std::string s;
+  for (size_t i = 0; i < str.size(); ++i) {
+    if (str[i] == delimeter) {
+      s = str.substr(bpos, i);
+      bpos = i;
+      s = Trim(s, " ");
+      if (!s.empty())
+        colls.push_back(s);
+    }
+  }
+  s = str.substr(bpos + 1);
+  s = Trim(s, " ");
+  if (!s.empty())
+    colls.push_back(s);
+  return colls;
+}
+
 bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range) {
 	if (v1 <= v2 + range && v1 >= v2 - range) {
 		return true;

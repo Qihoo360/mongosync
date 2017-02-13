@@ -62,6 +62,10 @@ struct Options {
 	std::string src_passwd;
 	std::string src_auth_db;
 	bool src_use_mcr;
+  bool is_mongos;
+
+  std::string shard_user;
+  std::string shard_passwd;
 
 	std::string dst_ip_port;
 	std::string dst_user;
@@ -73,6 +77,7 @@ struct Options {
 	std::string db;
 	std::string dst_db;
 	std::string coll;
+	std::string colls;
 	std::string dst_coll;
 
 	bool oplog;
@@ -144,11 +149,15 @@ private:
 
 class MongoSync {
 public:
-	static MongoSync* NewMongoSync(const Options& opt);
+	static MongoSync* NewMongoSync(const Options *opt);
 	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const bool bg = false);
-	MongoSync(const Options& opt);
+	MongoSync(const Options *opt);
 	~MongoSync();
 	int32_t InitConn();
+
+  // Used when sourse is mongos
+  std::vector<std::string> GetShards();
+  void StopBalancer();
 
 	void Process();
 	void CloneOplog();

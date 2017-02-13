@@ -17,6 +17,7 @@ namespace util {
 uint64_t Microtime();
 std::string Int2Str(int64_t num);
 std::string Trim(const std::string &str, const std::string del_str = " \t\n");
+std::vector<std::string> Split(const std::string &str, const char delimeter);
 bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range);
 std::string GetFormatTime(time_t t = -1); // Output format is: Feb 13 16:06:10 2013
 int CreatePath(const std::string &path, mode_t mode = 0755);
