@@ -40,10 +40,14 @@ static void Usage() {
 	std::cerr << "--dst_user arg           the destination mongodb server's logging user" << std::endl;
 	std::cerr << "--dst_passwd arg         the destination mongodb server's logging password" << std::endl;
 	std::cerr << "--dst_auth_db arg        the destination mongodb server's auth db" << std::endl;
+	std::cerr << "--is_mongos              the source mongodb server is mongos" << std::endl;
+	std::cerr << "--shard_user arg         the source mongos server's shard username" << std::endl;
+	std::cerr << "--shard_passwd arg       the source mongos server's shard password" << std::endl;
 	std::cerr << "--dst_use_mcr            force destination connection to use MONGODB-CR password machenism" << std::endl;
 	std::cerr << "--db arg                 the source database to be cloned" << std::endl;
 	std::cerr << "--dst_db arg             the destination database" << std::endl;
 	std::cerr << "--coll arg               the source collection to be cloned" << std::endl;
+	std::cerr << "--colls arg              the source collection list name" << std::endl;
 	std::cerr << "--dst_coll arg           the destination collection" << std::endl;
 	std::cerr << "--oplog                  whether to sync oplog" << std::endl;
 	std::cerr << "--raw_oplog              whether to only clone oplog" << std::endl;
@@ -101,6 +105,14 @@ void Options::ParseCommand(int argc, char** argv) {
 		} else if (strcasecmp(argv[idx], "--dst_auth_db") == 0) {
 			CHECK_ARGS_NUM();
 			dst_auth_db = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--is_mongos") == 0) {
+      is_mongos = true;
+		} else if (strcasecmp(argv[idx], "--shard_user") == 0) {
+			CHECK_ARGS_NUM();
+			shard_user = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--shard_passwd") == 0) {
+			CHECK_ARGS_NUM();
+			shard_passwd = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_use_mcr") == 0) {
 			dst_use_mcr = true;
 		} else if (strcasecmp(argv[idx], "--db") == 0) {
@@ -112,6 +124,9 @@ void Options::ParseCommand(int argc, char** argv) {
 		} else if (strcasecmp(argv[idx], "--coll") == 0) {
 			CHECK_ARGS_NUM();
 			coll = argv[++idx];
+		} else if (strcasecmp(argv[idx], "--colls") == 0) {
+			CHECK_ARGS_NUM();
+			colls = argv[++idx];
 		} else if (strcasecmp(argv[idx], "--dst_coll") == 0) {
 			CHECK_ARGS_NUM();
 			dst_coll = argv[++idx];
@@ -338,7 +353,25 @@ MongoSync* MongoSync::NewMongoSync(const Options *opt) {
 	return mongosync;
 }
 
-mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const bool bg) {
+bool MongoSync::IsMasterMongo() {
+  mongo::BSONObj tmp;
+  if (!src_conn_->runCommand("db", BSON("isMaster" << 1), tmp, mongo::QueryOption_SlaveOk)) {
+    LOG(FATAL) << "runCommand db.isMaster()" << std::endl;
+    return true;
+  }
+  if (!tmp.getBoolField("secondary")) {
+    LOG(INFO) << opt_.src_ip_port << " is MASTER" << std::endl;
+    return true; 
+  }
+  return false;
+}
+
+mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_port,
+                                                     const std::string &auth_db,
+                                                     const std::string &user,
+                                                     const std::string &passwd,
+                                                     const bool use_mcr,
+                                                     const bool bg) {
 	std::string errmsg;
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
@@ -365,8 +398,16 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_p
 }
 
 int32_t MongoSync::InitConn() {
-	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port, opt_.src_auth_db, opt_.src_user, opt_.src_passwd, opt_.src_use_mcr))
-			|| !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port, opt_.dst_auth_db, opt_.dst_user, opt_.dst_passwd, opt_.dst_use_mcr))) {
+	if (!(src_conn_ = ConnectAndAuth(opt_.src_ip_port,
+                                   opt_.src_auth_db,
+                                   opt_.src_user,
+                                   opt_.src_passwd,
+                                   opt_.src_use_mcr)) ||
+      !(dst_conn_ = ConnectAndAuth(opt_.dst_ip_port,
+                                   opt_.dst_auth_db,
+                                   opt_.dst_user,
+                                   opt_.dst_passwd,
+                                   opt_.dst_use_mcr))) {
 		return -1;	
 	}
 	src_version_ = GetMongoVersion(src_conn_);
@@ -387,8 +428,6 @@ std::vector<std::string> MongoSync::GetShards() {
   while (cursor->more()) {
     tmp = cursor->next();
     std::string shard = tmp.getStringField("host");
-    size_t pos = shard.find(',');
-    shard = shard.substr(0, pos);
     shards.push_back(shard);
   }
   return shards;
@@ -594,7 +633,7 @@ retry:
   	  bg_thread_group_.AddWriteUnit(dst_ns, batch);
 		}
 	} catch (mongo::DBException &e) {
-		LOG(WARN) << "exception occurs: " << e.toString() << ", retry it" << std::endl;
+		LOG(WARN) << "exception occurs: " << opt_.src_ip_port << e.toString() << ", retry it" << std::endl;
 		delete batch;
 		if (retries--) {
 			goto retry;

@@ -4,19 +4,11 @@
 #include <iostream>
 
 void *mongo_to_mongos(void *args) {
-  Options *opt = reinterpret_cast<Options *>(args);
-  int ret = 0;
-
-  MongoSync *mongosync = MongoSync::NewMongoSync(opt);
-  if (!mongosync) {
-    ret = -1;
-    pthread_exit(&ret);
-  }
+  MongoSync *mongosync = reinterpret_cast<MongoSync *>(args);
   mongosync->Process();
 
   delete mongosync;
-  delete opt;
-  pthread_exit(&ret);
+  pthread_exit(NULL);
 }
 
 int main(int argc, char *argv[]) {
@@ -68,13 +60,36 @@ int main(int argc, char *argv[]) {
     int ret;
     pthread_t tid;
     std::vector<pthread_t> tids;
+    std::vector<std::string> shard_ips;
+    Options shard_opt(opt);
+    shard_opt.src_user = opt.shard_user;
+    shard_opt.src_passwd = opt.shard_passwd;
     for (int i = 0; i < shards.size(); i++) {
-      Options *sopt = new Options(opt); // delete in thread
       size_t slash_pos = shards[i].find('/');
-      sopt->src_ip_port = shards[i].substr(slash_pos + 1);
-      sopt->src_user = sopt->shard_user;
-      sopt->src_passwd = sopt->shard_passwd;
-      ret = pthread_create(&tid, NULL, mongo_to_mongos, (void *)sopt);
+      std::string shard_addr = shards[i].substr(slash_pos + 1);
+      shard_ips = util::Split(shard_addr, ',');
+
+      // find a SECONDARY src mongodb
+      MongoSync *mongosync = NULL;
+      int j = 0;
+      for (j = 0; j < shard_ips.size(); j++) {
+        shard_opt.src_ip_port = shard_ips[j];
+        shard_opt.is_mongos = false;
+        mongosync = MongoSync::NewMongoSync(&shard_opt); // delete in thread
+        if (mongosync && !mongosync->IsMasterMongo())
+          break;
+        else if (mongosync && j == shard_ips.size() - 1)
+          break;
+        else
+          delete mongosync;
+      }
+      if (!mongosync) {
+        LOG(FATAL) << "Create shard: " << shard_ips[j] <<
+          "mongosync instance failed" << std::endl;
+        return -1;
+      }
+
+      ret = pthread_create(&tid, NULL, mongo_to_mongos, (void *)mongosync);
       if (ret != 0)
         return -1;
       tids.push_back(tid);

@@ -150,10 +150,16 @@ private:
 class MongoSync {
 public:
 	static MongoSync* NewMongoSync(const Options *opt);
-	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const bool bg = false);
+	static mongo::DBClientConnection* ConnectAndAuth(const std::string &srv_ip_port,
+                                                   const std::string &auth_db,
+                                                   const std::string &user,
+                                                   const std::string &passwd,
+                                                   const bool use_mcr,
+                                                   const bool bg = false);
 	MongoSync(const Options *opt);
 	~MongoSync();
 	int32_t InitConn();
+  bool IsMasterMongo();
 
   // Used when sourse is mongos
   std::vector<std::string> GetShards();
