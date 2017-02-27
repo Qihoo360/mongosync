@@ -53,7 +53,10 @@ int main(int argc, char *argv[]) {
       return -1;
     }
     std::vector<std::string> shards = mongosync->GetShards();
-    mongosync->StopBalancer();
+    if (mongosync->IsBalancerRunning()) {
+      LOG(FATAL) << "Balancer is running" << std::endl;
+      return -1;
+    }
     delete mongosync;
 
     // Create connection between shard and dst mongos
@@ -67,14 +70,13 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < shards.size(); i++) {
       size_t slash_pos = shards[i].find('/');
       std::string shard_addr = shards[i].substr(slash_pos + 1);
-      shard_ips = util::Split(shard_addr, ',');
+      util::Split(shard_addr, ',', shard_ips);
 
       // find a SECONDARY src mongodb
       MongoSync *mongosync = NULL;
       int j = 0;
       for (j = 0; j < shard_ips.size(); j++) {
         shard_opt.src_ip_port = shard_ips[j];
-        shard_opt.is_mongos = false;
         mongosync = MongoSync::NewMongoSync(&shard_opt); // delete in thread
         if (mongosync && !mongosync->IsMasterMongo())
           break;
@@ -84,8 +86,7 @@ int main(int argc, char *argv[]) {
           delete mongosync;
       }
       if (!mongosync) {
-        LOG(FATAL) << "Create shard: " << shard_ips[j] <<
-          "mongosync instance failed" << std::endl;
+        LOG(FATAL) << "Create shard mongosync instance failed" << std::endl;
         return -1;
       }
 

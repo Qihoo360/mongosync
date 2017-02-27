@@ -31,24 +31,17 @@ std::string Trim(const std::string &str, const std::string del_str) {
   return str.substr(begin, end-begin+1);
 }
 
-std::vector<std::string> Split(const std::string &str, const char delimeter) {
-  size_t bpos = 0;
-  std::vector<std::string> colls;
-  std::string s;
-  for (size_t i = 0; i < str.size(); ++i) {
-    if (str[i] == delimeter) {
-      s = str.substr(bpos, i);
-      bpos = i;
-      s = Trim(s, " ");
-      if (!s.empty())
-        colls.push_back(s);
+std::vector<std::string> &Split(const std::string &s,
+                                char delim,
+                                std::vector<std::string> &elems) {
+    elems.clear();
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, delim)) {
+        if (!item.empty())
+            elems.push_back(Trim(item, " "));
     }
-  }
-  s = str.substr(bpos + 1);
-  s = Trim(s, " ");
-  if (!s.empty())
-    colls.push_back(s);
-  return colls;
+    return elems;
 }
 
 bool AlmostEqual(int64_t v1, int64_t v2, uint64_t range) {

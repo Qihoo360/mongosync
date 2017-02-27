@@ -7,7 +7,7 @@
 #include "log.h"
 
 #define MAX_BATCH_BUFFER_SIZE (16*1024*1024)
-#define MONGOSYNC_PROMPT "\t[mongosync]\t"
+const std::string PROMPT_PREFIX = "\t[mongosync";
 
 enum OplogProcessOp {
 	kClone,
@@ -163,7 +163,7 @@ public:
 
   // Used when sourse is mongos
   std::vector<std::string> GetShards();
-  void StopBalancer();
+  bool IsBalancerRunning();
 
 	void Process();
 	void CloneOplog();
@@ -184,6 +184,9 @@ private:
 
 	//const static std::string oplog_ns_ = "local.oplog.rs"; // TODO: Is it const
 	const static std::string oplog_ns_;
+
+  // Used for LOG
+  std::string MONGOSYNC_PROMPT;
 
   //backgroud thread for Batch write
   util::BGThreadGroup bg_thread_group_; 

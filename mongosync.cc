@@ -332,6 +332,13 @@ MongoSync::MongoSync(const Options *opt)
 									 opt->dst_passwd,
 									 opt->dst_use_mcr,
 									 opt->bg_num) {
+  if (opt->is_mongos) {
+    // [mongosync_127.0.0.1:8099]
+    MONGOSYNC_PROMPT = PROMPT_PREFIX + "_" + opt->src_ip_port + "]\t";
+  } else {
+    // [mongosync]
+    MONGOSYNC_PROMPT = PROMPT_PREFIX + "]\t";
+  }
 }
 
 
@@ -376,22 +383,26 @@ mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_p
 	mongo::DBClientConnection* conn = NULL;
 	conn = new mongo::DBClientConnection();	
 	if (!conn->connect(srv_ip_port, errmsg)) {
-		LOG(FATAL) << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv: " << srv_ip_port << " failed, with errmsg: " << errmsg << std::endl;
+		LOG(FATAL) << util::GetFormatTime() << "connect to srv: " << srv_ip_port
+      << " failed, with errmsg: " << errmsg << std::endl;
 		delete conn;
 		return NULL;
 	}
   if (!bg) {
-    LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "connect to srv_rsv: " << srv_ip_port << " ok!" << std::endl;
+    LOG(INFO) << util::GetFormatTime() << "connect to srv_rsv: " << srv_ip_port
+      << " ok!" << std::endl;
   }
 
 	if (!passwd.empty()) {
 		if (!conn->auth(auth_db, user, passwd, errmsg, use_mcr)) {
-			LOG(FATAL) << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " failed" << std::endl; 
+			LOG(FATAL) << util::GetFormatTime() << "srv: " << srv_ip_port
+        << ", dbname: " << auth_db << " failed" << std::endl; 
 			delete conn;
 			return NULL;
 		}
     if (!bg) {
-		  LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "srv: " << srv_ip_port << ", dbname: " << auth_db << " ok!" << std::endl;
+		  LOG(INFO) << util::GetFormatTime() << "srv: " << srv_ip_port
+        << ", dbname: " << auth_db << " ok!" << std::endl;
     }
 	}
 	return conn;
@@ -433,14 +444,20 @@ std::vector<std::string> MongoSync::GetShards() {
   return shards;
 }
 
-void MongoSync::StopBalancer() {
-  // Stop Balancer if src is mongos
-  src_conn_->update("config.settings",
-                    mongo::Query(BSON("_id" << "balancer")),
-                    BSON("$set" << BSON("stopped" << "true")),
-                    true);
+bool MongoSync::IsBalancerRunning() {
+	mongo::BSONObj obj = src_conn_->findOne("config.settings",
+                                          mongo::Query(BSON("_id" << "balancer")),
+                                          NULL,
+                                          mongo::QueryOption_SlaveOk).getOwned();
+  if (obj.isEmpty())
+    return true;
 
-  // TODO gaodq, 清除balancer未删除的垃圾数据
+  std::string balancer_state = obj.jsonString();
+  if (balancer_state.find("stopped") != std::string::npos &&
+      balancer_state.find("true") != std::string::npos)
+    return false;
+
+  return true;
 }
 
 void MongoSync::Process() {
@@ -510,7 +527,11 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 
 	while (true) {
 		while (!cursor->more()) {
-
+      if (cursor->isDead()) {
+        LOG(FATAL) << "cursor is dead, try rebuild" << std::endl;
+        cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL, mongo::QueryOption_CursorTailable | mongo::QueryOption_AwaitData);
+        continue;
+      }
 			if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
 				if (!cur_times.empty() && before(pre_times, cur_times)) {
 					LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
@@ -569,7 +590,7 @@ void MongoSync::CloneDb(std::string db) {
 
 	std::vector<std::string> colls;
   if (!opt_.colls.empty()) {
-    colls = util::Split(opt_.colls, ',');
+    util::Split(opt_.colls, ',', colls);
   } else if (GetAllCollByVersion(src_conn_, src_version_, db, colls) == -1) { // get collections failed
     return;
   }
@@ -601,7 +622,8 @@ void MongoSync::CloneColl(std::string src_ns, std::string dst_ns, int batch_size
 
   // Clone record
 retry:
-	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL, mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk);
+	cursor = src_conn_->query(src_ns, opt_.filter.snapshot(), 0, 0, NULL,
+                            mongo::QueryOption_AwaitData | mongo::QueryOption_SlaveOk | mongo::QueryOption_NoCursorTimeout);
 	std::vector<mongo::BSONObj> *batch = new std::vector<mongo::BSONObj>; //to be deleted by bg thread
 	acc_size = 0;
 	percent = 0;
@@ -714,6 +736,10 @@ bool MongoSync::ProcessSingleOplog(const std::string& db, const std::string& col
 	}
 
 	std::string type = oplog.getStringField("op");
+  if (type.empty()) {
+    LOG(FATAL) << "oplog doesn't not has \"op\" filed" << std::endl;
+    return false;
+  }
 	mongo::BSONObj obj = oplog.getObjectField("o");
 	switch(type.at(0)) {
 		case 'i':
@@ -893,7 +919,11 @@ int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string 
 		while (cursor->more()) {
 			tmp = cursor->next();
 			coll = tmp.getStringField("name");
-      if (mongoutils::str::contains(coll, ".system.") ||
+      if (mongoutils::str::endsWith(coll.c_str(), ".system.namespaces") ||
+          mongoutils::str::endsWith(coll.c_str(), ".system.users") ||
+          mongoutils::str::endsWith(coll.c_str(), ".system.js") ||
+          mongoutils::str::endsWith(coll.c_str(), ".system.profile") ||
+          mongoutils::str::endsWith(coll.c_str(), ".system.indexes") ||
           mongoutils::str::contains(coll, ".$")) {
 				continue;
 			}
