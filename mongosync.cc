@@ -326,12 +326,12 @@ MongoSync::MongoSync(const Options *opt)
 	: opt_(*opt),
 	src_conn_(NULL),
 	dst_conn_(NULL),
-	bg_thread_group_(opt->dst_ip_port,
-			             opt->dst_auth_db,
-									 opt->dst_user,
-									 opt->dst_passwd,
-									 opt->dst_use_mcr,
-									 opt->bg_num) {
+  bg_thread_group_(opt->dst_ip_port,
+                   opt->dst_auth_db,
+                   opt->dst_user,
+                   opt->dst_passwd,
+                   opt->dst_use_mcr,
+                   opt->bg_num) {
   if (opt->is_mongos) {
     // [mongosync_127.0.0.1:8099]
     MONGOSYNC_PROMPT = PROMPT_PREFIX + "_" + opt->src_ip_port + "]\t";
@@ -501,6 +501,15 @@ void MongoSync::SyncOplog() {
 
 void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
+
+  query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << oplog_begin_.timestamp()));
+	mongo::BSONObj obj = src_conn_->findOne(oplog_ns_, query, NULL, mongo::QueryOption_SlaveOk);
+  if (obj.isEmpty()) {
+    LOG(FATAL) << "Can not find oplog at" << oplog_begin_.sec << ","
+      << oplog_begin_.no << std::endl;
+    return;
+  }
+
 	if (/* !opt_.db.empty() &&*/ opt_.coll.empty()) { // both specifying db name and not specifying
 		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
 	} else if (!opt_.db.empty() && !opt_.coll.empty()) {
@@ -508,7 +517,10 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << ns.ns()) << BSON("ns" << ns.db() + ".system.indexes") << BSON("ns" << ns.db() + ".$cmd") << BSON("ns" << "admin.$cmd"))
 					<< "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp()));
 	}
-	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL, mongo::QueryOption_CursorTailable | mongo::QueryOption_AwaitData);
+	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL,
+                                                                 mongo::QueryOption_CursorTailable |
+                                                                 mongo::QueryOption_AwaitData |
+                                                                 mongo::QueryOption_NoCursorTimeout);
 	std::string dst_db, dst_coll;
 	if (need_clone_oplog()) {
 		NamespaceString ns(opt_.dst_oplog_ns);
@@ -523,13 +535,24 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	OplogTime cur_times, pre_times(0, 0);
 	char time_buf[32];
 	bool waiting = false;
+  bool cursor_dead = false;
 	int64_t pre = 0, cur;
 
 	while (true) {
 		while (!cursor->more()) {
       if (cursor->isDead()) {
-        LOG(FATAL) << "cursor is dead, try rebuild" << std::endl;
-        cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL, mongo::QueryOption_CursorTailable | mongo::QueryOption_AwaitData);
+        mongo::BSONObj error;
+        if (cursor->peekError(&error)) {
+          LOG(FATAL) << MONGOSYNC_PROMPT << error.toString() << std::endl;
+        } else {
+          LOG(FATAL) << MONGOSYNC_PROMPT << "no cursor error" << std::endl;
+        }
+        cursor_dead = true;
+        LOG(FATAL) << MONGOSYNC_PROMPT << "cursor is dead, try rebuild" << std::endl;
+        cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL,
+                                  mongo::QueryOption_CursorTailable |
+                                  mongo::QueryOption_AwaitData |
+                                  mongo::QueryOption_NoCursorTimeout);
         continue;
       }
 			if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
@@ -550,6 +573,11 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 
 			sleep(1);
 		}
+    // cursor dead but rebuild
+    if (cursor_dead) {
+      cursor_dead = false;
+      LOG(WARN) << MONGOSYNC_PROMPT << "cursor rebuild success!" << std::endl;
+    }
 		waiting = false;
 
 		oplog = cursor->next();
@@ -559,6 +587,9 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 		time(&cur);
 		if (cur > pre && !cur_times.empty() && before(pre_times, cur_times)) {
 			pre = cur;
+      if (cur - cur_times.sec < 20) {
+        LOG(INFO) << MONGOSYNC_PROMPT << "Syncronization almost done" << std::endl;
+      }
 			pre_times = cur_times;
 			LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
 		}
@@ -898,7 +929,7 @@ std::string MongoSync::GetMongoVersion(mongo::DBClientConnection* conn) {
 int MongoSync::GetAllCollByVersion(mongo::DBClientConnection* conn, std::string version, std::string db, std::vector<std::string>& colls) {
 	std::string version_header = version.substr(0, 4);
 	mongo::BSONObj tmp;
-	if (version_header == "3.0." || version_header == "3.2.") {
+	if (version_header == "3.0." || version_header == "3.2." || version_header == "3.4.") {
 		mongo::BSONObj array;
 		if (!conn->runCommand(db, BSON("listCollections" << 1), tmp, mongo::QueryOption_SlaveOk)) {
 			LOG(FATAL) << "get " << db << "'s collections failed" << std::endl;
@@ -940,7 +971,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 	NamespaceString ns(coll_full_name);
 	mongo::BSONObj tmp;
 	std::string version_header = version.substr(0, 4);
-	if (version_header == "3.0." || version_header == "3.2.") {
+	if (version_header == "3.0." || version_header == "3.2." || version_header == "3.4.") {
 		if (!conn->runCommand(ns.db(), BSON("listIndexes" << ns.coll()), tmp, mongo::QueryOption_SlaveOk)) {
 			LOG(FATAL) << coll_full_name << " get indexes failed" << std::endl;
 			return -1;
@@ -969,7 +1000,7 @@ int MongoSync::GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::str
 void MongoSync::SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::string version, std::string coll_full_name, mongo::BSONObj index) {
 	std::string version_header = version.substr(0, 4);
 	NamespaceString ns(coll_full_name);
-	if (version_header == "3.0." || version_header == "3.2.") {
+	if (version_header == "3.0." || version_header == "3.2." || version_header == "3.4.") {
 		mongo::BSONObj tmp;
 		conn->runCommand(ns.db(), BSON("createIndexes" << ns.coll() << "indexes" << BSON_ARRAY(index)), tmp, mongo::QueryOption_SlaveOk);
 	} else if (version_header == "2.4." || version_header == "2.6.") {
