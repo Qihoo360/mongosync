@@ -9,7 +9,7 @@ OBJECT = mongosync
 OUTPUT = ./output
 DRIVER_DIR = ./dep/mongo-cxx-driver
 DRIVER_LIB = $(DRIVER_DIR)/build/install/lib/libmongoclient.a
-VERSION = -D_GITVER_=$(shell git rev-list master | head -n1) \
+VERSION = -D_GITVER_=$(shell git rev-list HEAD | head -n1) \
 					-D_COMPILEDATE_=$(shell date +%FT%T%z)
 
 CPU_NUM = $(shell cat /proc/cpuinfo | grep CPU | wc -l)

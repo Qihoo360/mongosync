@@ -221,6 +221,7 @@ void *BGThreadGroup::Run(void *arg) {
     pthread_mutex_unlock(queue_mutex_p);
 
     if (thread_ptr->is_apply_oplog()) {
+      unit.args->dst_conn = conn;
       unit.handle((void *)unit.args);
     } else {
       conn->insert(unit.ns, *(unit.batch),

@@ -639,7 +639,6 @@ retry:
       args->dst_coll = dst_coll;
       args->oplog = oplog;
       args->op = op;
-      args->dst_conn = dst_conn_;
 
       // Get oplog id to hash
       if (type.at(0) == 'u') {
