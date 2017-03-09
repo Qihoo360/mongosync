@@ -24,21 +24,32 @@ std::string GetFormatTime(time_t t = -1); // Output format is: Feb 13 16:06:10 2
 int CreatePath(const std::string &path, mode_t mode = 0755);
 
 /*************************************************************************************************/
+struct OplogArgs {
+  std::string db;
+  std::string coll;
+  std::string dst_db;
+  std::string dst_coll;
+  mongo::BSONObj oplog;
+	mongo::DBClientConnection* dst_conn;
+  int op;
+};
 typedef std::vector<mongo::BSONObj> WriteBatch;
 typedef struct {
   std::string ns;
   WriteBatch *batch;
+  OplogArgs *args;
+  void *(*handle)(void*);
 } WriteUnit;
-
 
 class BGThreadGroup { //This BGThreadGroup is only used for batch write
 
 #define BG_THREAD_NUM 10
 public:
-  BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db = "", const std::string &user = "", const std::string &passwd = "", const bool use_mcr = false, int32_t bg_thread_num = 10);
+  BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db = "", const std::string &user = "", const std::string &passwd = "", const bool use_mcr = false, int32_t bg_thread_num = 10, bool is_apply_oplog = false);
   ~BGThreadGroup();
 
   void AddWriteUnit(const std::string &ns, WriteBatch *unit);
+  void AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *));
 
   bool should_exit() {
     return should_exit_;
@@ -76,6 +87,10 @@ public:
 		return use_mcr_;
 	} 
 
+	bool is_apply_oplog() const {
+		return is_apply_oplog_;
+	} 
+
 private:
   void StartThreadsIfNeed();
   static void *Run(void *arg);
@@ -90,6 +105,7 @@ private:
 	std::string passwd_;
 	bool use_mcr_;
 	int32_t bg_thread_num_;
+	bool is_apply_oplog_;
 
   pthread_cond_t clock_;
   pthread_mutex_t mlock_;

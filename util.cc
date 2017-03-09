@@ -103,7 +103,7 @@ int CreatePath(const std::string &path, mode_t mode) {
 
 /*******************************************************************************************/
 
-BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const int32_t bg_thread_num)
+BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &auth_db, const std::string &user, const std::string &passwd, const bool use_mcr, const int32_t bg_thread_num, bool is_apply_oplog)
   :srv_ip_port_(srv_ip_port),
 	auth_db_(auth_db),
 	user_(user),
@@ -111,7 +111,8 @@ BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &
 	running_(false), 
   should_exit_(false),
 	use_mcr_(use_mcr),
-	bg_thread_num_(bg_thread_num) {
+	bg_thread_num_(bg_thread_num),
+  is_apply_oplog_(is_apply_oplog) {
 
   pthread_mutex_init(&mlock_, NULL);
   pthread_cond_init(&clock_, NULL);
@@ -171,6 +172,24 @@ void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
   pthread_mutex_unlock(&mlock_);  
 }
 
+void BGThreadGroup::AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *)) {
+  StartThreadsIfNeed();
+
+  WriteUnit unit;
+  unit.args = args;
+  unit.handle = handle_fun;
+
+  pthread_mutex_lock(&mlock_);
+  while (!write_queue_.empty()) {
+    pthread_mutex_unlock(&mlock_);
+    sleep(1);
+    pthread_mutex_lock(&mlock_);
+  }
+
+  write_queue_.push(unit);
+  pthread_cond_signal(&clock_);
+  pthread_mutex_unlock(&mlock_);  
+}
 
 void *BGThreadGroup::Run(void *arg) {
   BGThreadGroup *thread_ptr = reinterpret_cast<BGThreadGroup *>(arg);
@@ -201,8 +220,13 @@ void *BGThreadGroup::Run(void *arg) {
     queue_p->pop();
     pthread_mutex_unlock(queue_mutex_p);
 
-    conn->insert(unit.ns, *(unit.batch), mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
-    delete unit.batch;
+    if (thread_ptr->is_apply_oplog()) {
+      unit.handle((void *)unit.args);
+    } else {
+      conn->insert(unit.ns, *(unit.batch),
+                   mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
+      delete unit.batch;
+    }
   }
 
 	delete conn;

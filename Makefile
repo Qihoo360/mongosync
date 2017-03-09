@@ -9,6 +9,8 @@ OBJECT = mongosync
 OUTPUT = ./output
 DRIVER_DIR = ./dep/mongo-cxx-driver
 DRIVER_LIB = $(DRIVER_DIR)/build/install/lib/libmongoclient.a
+VERSION = -D_GITVER_=$(shell git rev-list master | head -n1) \
+					-D_COMPILEDATE_=$(shell date +%FT%T%z)
 
 CPU_NUM = $(shell cat /proc/cpuinfo | grep CPU | wc -l)
 ifneq ($(CPU_NUM), 1)
@@ -58,7 +60,7 @@ $(DRIVER_LIB):
 	scons -C $(DRIVER_DIR) --ssl install -j $(CPU_USE)
 
 $(OBJS): %.o : %.cc
-	$(CXX) $(CXXFLAGS) -c $< -o $@ $(INCLUDE_PATH) 
+	$(CXX) $(CXXFLAGS) -c $< -o $@ $(INCLUDE_PATH) $(VERSION)
 
 distclean: clean
 	scons -C $(DRIVER_DIR) --ssl -c .

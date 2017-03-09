@@ -8,9 +8,10 @@
 
 #define MAX_BATCH_BUFFER_SIZE (16*1024*1024)
 const std::string PROMPT_PREFIX = "\t[mongosync";
+const int OPLOG_APPLY_THREADNUM = 6;
 
 enum OplogProcessOp {
-	kClone,
+	kClone = 0,
 	kApply
 };
 
@@ -189,22 +190,26 @@ private:
   std::string MONGOSYNC_PROMPT;
 
   //backgroud thread for Batch write
+  util::BGThreadGroup *oplog_bg_thread_group_[OPLOG_APPLY_THREADNUM]; 
   util::BGThreadGroup bg_thread_group_; 
 
 	void CloneCollIndex(std::string sns, std::string dns);
 	void GenericProcessOplog(OplogProcessOp op);
-	bool ProcessSingleOplog(const std::string& db, const std::string& coll, std::string dst_db, std::string dst_coll, const mongo::BSONObj& oplog, const OplogProcessOp op);
-	void ApplyInsertOplog(const std::string& dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog);
-	void ApplyCmdOplog(std::string dst_db, const std::string& dst_coll, const mongo::BSONObj& oplog, bool same_coll = true);
+	static void *ProcessSingleOplog(void *args);
+	static void ApplyInsertOplog(mongo::DBClientConnection* dst_conn,
+                               const std::string& dst_db, const std::string& dst_coll,
+                               const mongo::BSONObj& oplog);
+	static void ApplyCmdOplog(mongo::DBClientConnection* dst_conn,
+                            std::string src_db,
+                            std::string dst_db, const std::string& dst_coll,
+                            const mongo::BSONObj& oplog, bool same_coll = true);
 	OplogTime GetSideOplogTime(mongo::DBClientConnection* conn, std::string ns, std::string db, std::string coll, bool first_or_last); //first_or_last==true->get the first timestamp; first_or_last==false->get the last timestamp
 
-	std::string GetMongoVersion(mongo::DBClientConnection* conn);
+	static std::string GetMongoVersion(mongo::DBClientConnection* conn);
 	int GetCollIndexesByVersion(mongo::DBClientConnection* conn, std::string version, std::string ns, mongo::BSONObj& indexes);
-	void SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::string version, std::string coll_full_name, mongo::BSONObj index);
+	static void SetCollIndexesByVersion(mongo::DBClientConnection* conn, std::string version, std::string coll_full_name, mongo::BSONObj index);
 	int GetAllCollByVersion(mongo::DBClientConnection* conn, std::string version, std::string db, std::vector<std::string>& colls);
 	
-
-
 	bool need_clone_oplog() {
 		return opt_.raw_oplog;
 	}
