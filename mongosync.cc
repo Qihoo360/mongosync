@@ -524,11 +524,13 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 					<< "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp()));
 	}
   int retries = 3;
+  LOG(INFO) << MONGOSYNC_PROMPT << "Start sync oplog" << query.toString() << std::endl;
 retry:
 	std::auto_ptr<mongo::DBClientCursor> cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL,
                                                                  mongo::QueryOption_CursorTailable |
                                                                  mongo::QueryOption_AwaitData |
-                                                                 mongo::QueryOption_NoCursorTimeout);
+                                                                 mongo::QueryOption_NoCursorTimeout |
+                                                                 mongo::QueryOption_SlaveOk);
 	std::string dst_db, dst_coll;
 	if (need_clone_oplog()) {
 		NamespaceString ns(opt_.dst_oplog_ns);
@@ -551,6 +553,7 @@ retry:
     try {
       while (!cursor->more()) {
         if (cursor->isDead()) {
+          sleep(1);
           mongo::BSONObj error;
           if (cursor->peekError(&error)) {
             LOG(FATAL) << MONGOSYNC_PROMPT << error.toString() << std::endl;
@@ -562,7 +565,8 @@ retry:
           cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL,
                                     mongo::QueryOption_CursorTailable |
                                     mongo::QueryOption_AwaitData |
-                                    mongo::QueryOption_NoCursorTimeout);
+                                    mongo::QueryOption_NoCursorTimeout |
+                                    mongo::QueryOption_SlaveOk);
           continue;
         }
         if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
@@ -653,6 +657,11 @@ retry:
           hash_id = static_cast<char>(oplog_id.at(oplog_id.size() - 1)) % OPLOG_APPLY_THREADNUM;
         }
       }
+      while (*(oplog_bg_thread_group_[hash_id]->record_count_p()) > 5120) {
+        LOG(INFO) << "Too many oplog waiting for apply, sleep 1" << std::endl;
+        sleep(1);
+      }
+
       oplog_bg_thread_group_[hash_id]->AddWriteUnit(args, MongoSync::ProcessSingleOplog);
       memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));
 

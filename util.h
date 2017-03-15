@@ -91,6 +91,10 @@ public:
 		return is_apply_oplog_;
 	} 
 
+  int *record_count_p() {
+    return &record_count_;
+  }
+
 private:
   void StartThreadsIfNeed();
   static void *Run(void *arg);
@@ -106,6 +110,7 @@ private:
 	bool use_mcr_;
 	int32_t bg_thread_num_;
 	bool is_apply_oplog_;
+  int record_count_;
 
   pthread_cond_t clock_;
   pthread_mutex_t mlock_;

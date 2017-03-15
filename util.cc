@@ -112,7 +112,8 @@ BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &
   should_exit_(false),
 	use_mcr_(use_mcr),
 	bg_thread_num_(bg_thread_num),
-  is_apply_oplog_(is_apply_oplog) {
+  is_apply_oplog_(is_apply_oplog),
+  record_count_(0) {
 
   pthread_mutex_init(&mlock_, NULL);
   pthread_cond_init(&clock_, NULL);
@@ -186,6 +187,7 @@ void BGThreadGroup::AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *)) {
     pthread_mutex_lock(&mlock_);
   }
 
+  record_count_++;
   write_queue_.push(unit);
   pthread_cond_signal(&clock_);
   pthread_mutex_unlock(&mlock_);  
@@ -201,6 +203,7 @@ void *BGThreadGroup::Run(void *arg) {
   std::queue<WriteUnit> *queue_p = thread_ptr->write_queue_p();
   pthread_mutex_t *queue_mutex_p = thread_ptr->mlock_p();
   pthread_cond_t *queue_cond_p = thread_ptr->clock_p();
+  int *record_count = thread_ptr->record_count_p();
   WriteUnit unit;
 	
 
@@ -218,6 +221,7 @@ void *BGThreadGroup::Run(void *arg) {
 
     unit = queue_p->front();
     queue_p->pop();
+    --(*record_count);
     pthread_mutex_unlock(queue_mutex_p);
 
     if (thread_ptr->is_apply_oplog()) {
