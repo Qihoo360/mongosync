@@ -164,7 +164,7 @@ void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
   pthread_mutex_lock(&mlock_);
   while (!write_queue_.empty()) {
     pthread_mutex_unlock(&mlock_);
-    sleep(1);
+    usleep(50);
     pthread_mutex_lock(&mlock_);
   }
 
@@ -183,7 +183,7 @@ void BGThreadGroup::AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *)) {
   pthread_mutex_lock(&mlock_);
   while (!write_queue_.empty()) {
     pthread_mutex_unlock(&mlock_);
-    sleep(1);
+    usleep(100);
     pthread_mutex_lock(&mlock_);
   }
 
@@ -224,13 +224,25 @@ void *BGThreadGroup::Run(void *arg) {
     --(*record_count);
     pthread_mutex_unlock(queue_mutex_p);
 
-    if (thread_ptr->is_apply_oplog()) {
-      unit.args->dst_conn = conn;
-      unit.handle((void *)unit.args);
-    } else {
-      conn->insert(unit.ns, *(unit.batch),
-                   mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
-      delete unit.batch;
+    int retries = 3;
+retry:
+    try {
+      if (thread_ptr->is_apply_oplog()) {
+        unit.args->dst_conn = conn;
+        unit.handle((void *)unit.args);
+      } else {
+        conn->insert(unit.ns, *(unit.batch),
+                     mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
+        delete unit.batch;
+      }
+    } catch (mongo::DBException &e) {
+      LOG(WARN) << "exception occurs when insert to dst server: " << e.toString() << ", retry it" << std::endl;
+      if (retries--) {
+        goto retry;
+      } else {
+        LOG(FATAL) << "insert exception occur 3 times, exit" << std::endl;
+        exit(-1);
+      }
     }
   }
 

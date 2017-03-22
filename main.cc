@@ -57,6 +57,10 @@ int main(int argc, char *argv[]) {
       LOG(FATAL) << "Balancer is running" << std::endl;
       return -1;
     }
+    if (mongosync->IsBigChunkExist()) {
+      LOG(FATAL) << "Big chunk exist" << std::endl;
+      return -1;
+    }
     delete mongosync;
 
     // Create connection between shard and dst mongos

@@ -450,6 +450,16 @@ std::vector<std::string> MongoSync::GetShards() {
   return shards;
 }
 
+bool MongoSync::IsBigChunkExist() {
+	mongo::BSONObj obj = src_conn_->findOne("config.chunks",
+                                          mongo::Query(BSON("jumbo" << "true")),
+                                          NULL,
+                                          mongo::QueryOption_SlaveOk).getOwned();
+  if (!obj.isEmpty())
+    return true;
+  return false;
+}
+
 bool MongoSync::IsBalancerRunning() {
 	mongo::BSONObj obj = src_conn_->findOne("config.settings",
                                           mongo::Query(BSON("_id" << "balancer")),

@@ -164,6 +164,7 @@ public:
 
   // Used when sourse is mongos
   std::vector<std::string> GetShards();
+  bool IsBigChunkExist();
   bool IsBalancerRunning();
 
 	void Process();
