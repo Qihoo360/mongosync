@@ -509,7 +509,7 @@ void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
 
   query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << oplog_begin_.timestamp()));
-	mongo::BSONObj obj = src_conn_->findOne(oplog_ns_, query, NULL, mongo::QueryOption_SlaveOk);
+  mongo::BSONObj obj = src_conn_->findOne(oplog_ns_, query, NULL, mongo::QueryOption_SlaveOk);
   if (obj.isEmpty()) {
     LOG(FATAL) << "Can not find oplog at" << oplog_begin_.sec << ","
       << oplog_begin_.no << std::endl;
@@ -549,19 +549,23 @@ retry:
 	int64_t pre = 0, cur;
   util::OplogArgs *args;
 
+  timeval begin, end;
+  double timeused;
+
 	while (true) {
     try {
+      gettimeofday(&begin, NULL);
       while (!cursor->more()) {
         if (cursor->isDead()) {
           sleep(1);
           mongo::BSONObj error;
           if (cursor->peekError(&error)) {
-            LOG(FATAL) << MONGOSYNC_PROMPT << error.toString() << std::endl;
+            LOG(WARN) << MONGOSYNC_PROMPT << error.toString() << std::endl;
           } else {
-            LOG(FATAL) << MONGOSYNC_PROMPT << "no cursor error" << std::endl;
+            LOG(WARN) << MONGOSYNC_PROMPT << "no cursor error" << std::endl;
           }
           cursor_dead = true;
-          LOG(FATAL) << MONGOSYNC_PROMPT << "cursor is dead, try rebuild" << std::endl;
+          LOG(WARN) << MONGOSYNC_PROMPT << "cursor is dead, try rebuild" << std::endl;
           cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL,
                                     mongo::QueryOption_CursorTailable |
                                     mongo::QueryOption_AwaitData |
@@ -625,7 +629,7 @@ retry:
       }
       type = oplog.getStringField("op");
       if (type.empty()) {
-        LOG(FATAL) << "oplog doesn't not has \"op\" filed" << std::endl;
+        LOG(WARN) << "oplog doesn't not has \"op\" filed" << std::endl;
         goto pass_oplog;
       }
       if (type.at(0) == 'c') {
@@ -643,6 +647,7 @@ retry:
       args->dst_coll = dst_coll;
       args->oplog = oplog;
       args->op = op;
+      args->promot = MONGOSYNC_PROMPT;
 
       // Get oplog id to hash
       if (type.at(0) == 'u') {
@@ -654,12 +659,16 @@ retry:
         mongo::BSONElement e;
         if (id_obj.getObjectID(e)) {
           oplog_id = e.__oid().toString();
-          hash_id = static_cast<char>(oplog_id.at(oplog_id.size() - 1)) % OPLOG_APPLY_THREADNUM;
+          hash_id = static_cast<int>(oplog_id.at(oplog_id.size() - 1)) % OPLOG_APPLY_THREADNUM;
         }
+      } else {
+        goto pass_oplog;
       }
-      while (*(oplog_bg_thread_group_[hash_id]->record_count_p()) > 5120) {
-        LOG(INFO) << "Too many oplog waiting for apply, sleep 1" << std::endl;
-        sleep(1);
+
+      gettimeofday(&end, NULL);
+      timeused = ((end.tv_sec - begin.tv_sec) * 1000000 + (end.tv_usec - begin.tv_usec)) / 1000.0;
+      if (timeused > 200) { // >= 200ms
+        printf("%s Receive Oplog timeused: %lfms\n", MONGOSYNC_PROMPT.c_str(), timeused);
       }
 
       oplog_bg_thread_group_[hash_id]->AddWriteUnit(args, MongoSync::ProcessSingleOplog);
@@ -676,12 +685,12 @@ pass_oplog:
         LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
       }
     } catch (mongo::DBException &e) {
-      LOG(WARN) << "sync oplog exception occurs: " << opt_.src_ip_port << e.toString() << ", retry it" << std::endl;
+      LOG(WARN) << MONGOSYNC_PROMPT << "sync oplog exception occurs: " << opt_.src_ip_port << e.toString() << ", retry it" << std::endl;
       if (retries--) {
         delete args;
         goto retry;
       } else {
-        LOG(FATAL) << "sync oplog occurs exception 3 times, exit" << std::endl;
+        LOG(FATAL) << MONGOSYNC_PROMPT << "sync oplog occurs exception 3 times, exit" << std::endl;
         exit(-1);
       }
     }
@@ -774,16 +783,15 @@ retry:
 			}
 		}
 		if (!batch->empty()) {
-//      dst_conn_->insert(dst_ns, batch, mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged);
-  	  bg_thread_group_.AddWriteUnit(dst_ns, batch);
+      bg_thread_group_.AddWriteUnit(dst_ns, batch);
 		}
 	} catch (mongo::DBException &e) {
-		LOG(WARN) << "exception occurs: " << opt_.src_ip_port << e.toString() << ", retry it" << std::endl;
+		LOG(WARN) << MONGOSYNC_PROMPT << "exception occurs: " << opt_.src_ip_port << e.toString() << ", retry it" << std::endl;
 		delete batch;
 		if (retries--) {
 			goto retry;
 		} else {
-			LOG(FATAL) << "occurs exception 3 times, exit" << std::endl;
+			LOG(FATAL) << MONGOSYNC_PROMPT << "occurs exception 3 times, exit" << std::endl;
 			exit(-1);
 		}
 	}
@@ -831,43 +839,63 @@ void *MongoSync::ProcessSingleOplog(void *pargs) {
   mongo::BSONObj oplog = args->oplog;
   int op = args->op;
 	mongo::DBClientConnection* dst_conn = args->dst_conn;
+  std::string MONGOSYNC_PROMPT = args->promot;
   delete args;
 
-	std::string oplog_ns = oplog.getStringField("ns");	
+  timeval begin, end;
+  gettimeofday(&begin, NULL);
+  int retries = 3;
+retry:
+  try { // try catch oplog Exception
+    std::string oplog_ns = oplog.getStringField("ns");	
 
-	if (dst_db.empty()) {
-		dst_db = db.empty() ? NamespaceString(oplog_ns).db() : db;
-	}
-	if (dst_coll.empty()) {
-		dst_coll = coll.empty() ? NamespaceString(oplog_ns).coll() : coll;
-	}
-	std::string dns = dst_db + "." + dst_coll;
+    if (dst_db.empty()) {
+      dst_db = db.empty() ? NamespaceString(oplog_ns).db() : db;
+    }
+    if (dst_coll.empty()) {
+      dst_coll = coll.empty() ? NamespaceString(oplog_ns).coll() : coll;
+    }
+    std::string dns = dst_db + "." + dst_coll;
 
-	if (op == kClone) {
-		dst_conn->insert(dns, oplog, 0, &mongo::WriteConcern::unacknowledged);
-    return NULL;
-	}
+    if (op == kClone) {
+      dst_conn->insert(dns, oplog, 0, &mongo::WriteConcern::unacknowledged);
+      return NULL;
+    }
 
-	mongo::BSONObj obj = oplog.getObjectField("o");
-	std::string type = oplog.getStringField("op");
-	switch(type.at(0)) {
-		case 'i':
-			ApplyInsertOplog(dst_conn, dst_db, dst_coll, oplog);
-			break;
-		case 'u':
-			dst_conn->update(dns, oplog.getObjectField("o2"), oplog.getObjectField("o"));
-			break;
-		case 'd':
-			dst_conn->remove(dns, oplog.getObjectField("o"));
-			break;
-		case 'n':
-			break;
-		case 'c':
-			if (mongo::str::endsWith(dst_coll, "$cmd")) { //destination collection name is not specified
-				dst_coll = "";
-			}
-			ApplyCmdOplog(dst_conn, db, dst_db, dst_coll, oplog, coll == dst_coll);
-	}
+    mongo::BSONObj obj = oplog.getObjectField("o");
+    std::string type = oplog.getStringField("op");
+    switch(type.at(0)) {
+      case 'i':
+        ApplyInsertOplog(dst_conn, dst_db, dst_coll, oplog);
+        break;
+      case 'u':
+        dst_conn->update(dns, oplog.getObjectField("o2"), oplog.getObjectField("o"));
+        break;
+      case 'd':
+        dst_conn->remove(dns, oplog.getObjectField("o"));
+        break;
+      case 'n':
+        break;
+      case 'c':
+        if (mongo::str::endsWith(dst_coll, "$cmd")) { //destination collection name is not specified
+          dst_coll = "";
+        }
+        ApplyCmdOplog(dst_conn, db, dst_db, dst_coll, oplog, coll == dst_coll);
+    }
+  } catch (mongo::DBException& e) {
+    LOG(WARN) << MONGOSYNC_PROMPT << "apply oplog exception occurs: " << oplog.toString() << "..." << e.toString() << ", retry it" << std::endl;
+    if (retries--) {
+      goto retry;
+    } else {
+      LOG(FATAL) << MONGOSYNC_PROMPT << "sync oplog occurs exception 3 times, exit" << std::endl;
+      exit(-1);
+    }
+  }
+  gettimeofday(&end, NULL);
+  double timeused = ((end.tv_sec - begin.tv_sec) * 1000000 + (end.tv_usec - begin.tv_usec)) / 1000.0;
+  if (timeused > 200) { // 200ms
+    printf("Apply Oplog timeused: %lfms\n", timeused);
+  }
 }
 
 void MongoSync::ApplyInsertOplog(mongo::DBClientConnection* dst_conn,

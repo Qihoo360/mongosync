@@ -160,11 +160,10 @@ void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
   unit.ns = ns;
   unit.batch = batch;
 
-
   pthread_mutex_lock(&mlock_);
   while (!write_queue_.empty()) {
     pthread_mutex_unlock(&mlock_);
-    sleep(1);
+    usleep(50000);
     pthread_mutex_lock(&mlock_);
   }
 
@@ -173,6 +172,7 @@ void BGThreadGroup::AddWriteUnit(const std::string &ns, WriteBatch *batch) {
   pthread_mutex_unlock(&mlock_);  
 }
 
+// Oplog Apply queue
 void BGThreadGroup::AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *)) {
   StartThreadsIfNeed();
 
@@ -183,7 +183,7 @@ void BGThreadGroup::AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *)) {
   pthread_mutex_lock(&mlock_);
   while (!write_queue_.empty()) {
     pthread_mutex_unlock(&mlock_);
-    sleep(1);
+    usleep(1000);
     pthread_mutex_lock(&mlock_);
   }
 

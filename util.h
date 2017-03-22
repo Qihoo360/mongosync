@@ -32,6 +32,7 @@ struct OplogArgs {
   mongo::BSONObj oplog;
 	mongo::DBClientConnection* dst_conn;
   int op;
+  std::string promot;
 };
 typedef std::vector<mongo::BSONObj> WriteBatch;
 typedef struct {
