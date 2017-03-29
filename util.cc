@@ -112,8 +112,7 @@ BGThreadGroup::BGThreadGroup(const std::string &srv_ip_port, const std::string &
   should_exit_(false),
 	use_mcr_(use_mcr),
 	bg_thread_num_(bg_thread_num),
-  is_apply_oplog_(is_apply_oplog),
-  record_count_(0) {
+  is_apply_oplog_(is_apply_oplog) {
 
   pthread_mutex_init(&mlock_, NULL);
   pthread_cond_init(&clock_, NULL);
@@ -183,11 +182,10 @@ void BGThreadGroup::AddWriteUnit(OplogArgs *args, void *(*handle_fun)(void *)) {
   pthread_mutex_lock(&mlock_);
   while (!write_queue_.empty()) {
     pthread_mutex_unlock(&mlock_);
-    usleep(100);
+    usleep(10);
     pthread_mutex_lock(&mlock_);
   }
 
-  record_count_++;
   write_queue_.push(unit);
   pthread_cond_signal(&clock_);
   pthread_mutex_unlock(&mlock_);  
@@ -203,9 +201,7 @@ void *BGThreadGroup::Run(void *arg) {
   std::queue<WriteUnit> *queue_p = thread_ptr->write_queue_p();
   pthread_mutex_t *queue_mutex_p = thread_ptr->mlock_p();
   pthread_cond_t *queue_cond_p = thread_ptr->clock_p();
-  int *record_count = thread_ptr->record_count_p();
   WriteUnit unit;
-	
 
   while (!thread_ptr->should_exit()) {
 
@@ -221,7 +217,6 @@ void *BGThreadGroup::Run(void *arg) {
 
     unit = queue_p->front();
     queue_p->pop();
-    --(*record_count);
     pthread_mutex_unlock(queue_mutex_p);
 
     int retries = 3;
@@ -230,13 +225,23 @@ retry:
       if (thread_ptr->is_apply_oplog()) {
         unit.args->dst_conn = conn;
         unit.handle((void *)unit.args);
+        // LOG(WARN) << "insert oplog to dst server: " << unit.args->oplog.toString(0, 0) << std::endl;
+        delete unit.args;
       } else {
         conn->insert(unit.ns, *(unit.batch),
                      mongo::InsertOption_ContinueOnError, &mongo::WriteConcern::unacknowledged); 
         delete unit.batch;
       }
     } catch (mongo::DBException &e) {
-      LOG(WARN) << "exception occurs when insert to dst server: " << e.toString() << ", retry it" << std::endl;
+      if (thread_ptr->is_apply_oplog()) {
+        LOG(WARN) << "exception occurs when insert oplog to dst server: " << e.toString() <<
+          unit.args->oplog.toString() << std::endl;
+      } else {
+        LOG(WARN) << "exception occurs when insert data to dst server: " << e.toString() << std::endl;
+        for (int i = 0; i < unit.batch->size(); i++) {
+          LOG(WARN) << "exception bson data: " << (*(unit.batch))[i].toString() << std::endl;
+        }
+      }
       if (retries--) {
         goto retry;
       } else {

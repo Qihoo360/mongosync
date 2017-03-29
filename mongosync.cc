@@ -17,6 +17,8 @@
 #define str(a) #a
 #define xstr(a) str(a)
 
+extern int shards_num;
+
 static void GetSeparateArgs(const std::string& raw_str, std::vector<std::string>* argv_p) {
   const char* p = raw_str.data();
   const char *pch = strtok(const_cast<char*>(p), " ");
@@ -355,6 +357,9 @@ MongoSync::~MongoSync() {
 	if (dst_conn_) {
 		delete dst_conn_;
 	}
+  for (int i = 0; i < OPLOG_APPLY_THREADNUM; ++i) {
+    delete oplog_bg_thread_group_[i];
+  }
 }
 
 MongoSync* MongoSync::NewMongoSync(const Options *opt) {
@@ -518,14 +523,6 @@ void MongoSync::SyncOplog() {
 void MongoSync::GenericProcessOplog(OplogProcessOp op) {
 	mongo::Query query;	
 
-  query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << oplog_begin_.timestamp()));
-	mongo::BSONObj obj = src_conn_->findOne(oplog_ns_, query, NULL, mongo::QueryOption_SlaveOk);
-  if (obj.isEmpty()) {
-    LOG(FATAL) << "Can not find oplog at" << oplog_begin_.sec << ","
-      << oplog_begin_.no << std::endl;
-    return;
-  }
-
 	if (/* !opt_.db.empty() &&*/ opt_.coll.empty()) { // both specifying db name and not specifying
 		query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << mongo::GTE << oplog_begin_.timestamp() << mongo::LTE << oplog_finish_.timestamp())); //TODO: this cannot exact out the opt_.db related oplog, but the opt_.db-prefixed related oplog
 	} else if (!opt_.db.empty() && !opt_.coll.empty()) {
@@ -541,6 +538,19 @@ retry:
                                                                  mongo::QueryOption_AwaitData |
                                                                  mongo::QueryOption_NoCursorTimeout |
                                                                  mongo::QueryOption_SlaveOk);
+
+  try {
+    query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << oplog_begin_.timestamp()));
+    mongo::BSONObj obj = src_conn_->findOne(oplog_ns_, query, NULL, mongo::QueryOption_SlaveOk);
+    if (obj.isEmpty()) {
+      LOG(FATAL) << "Can not find oplog at" << oplog_begin_.sec << ","
+        << oplog_begin_.no << std::endl;
+      // return;
+    }
+  } catch (mongo::DBException& e) {
+    LOG(FATAL) << "find oplog DBException: " << e.toString() << std::endl;
+  }
+
 	std::string dst_db, dst_coll;
 	if (need_clone_oplog()) {
 		NamespaceString ns(opt_.dst_oplog_ns);
@@ -594,8 +604,7 @@ retry:
           LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "waiting for new data..." << std::endl;
           waiting = true;
         }
-
-        sleep(1);
+        usleep(500000);
       }
       // cursor dead but rebuild
       if (cursor_dead) {
@@ -604,15 +613,18 @@ retry:
       }
       waiting = false;
 
-      oplog = cursor->next();
+      oplog = cursor->next().getOwned();
 
       std::string oplog_ns = oplog.getStringField("ns");	
       std::string type;
       std::string oplog_id;
       mongo::BSONObj id_obj;
       int hash_id = 0;
-      args = new util::OplogArgs();
 
+      if (oplog.isEmpty()) {
+        LOG(WARN) << "oplog is empty" << std::endl;
+        goto pass_oplog;
+      }
       if (mongo::str::endsWith(oplog_ns, ".system.users")) { //filter all user related oplog, 2.4=>db.system.users, 3.x=>admin.system.users
         goto pass_oplog;
       }
@@ -635,7 +647,7 @@ retry:
       }
       type = oplog.getStringField("op");
       if (type.empty()) {
-        LOG(FATAL) << "oplog doesn't not has \"op\" filed" << std::endl;
+        LOG(WARN) << "oplog doesn't not has \"op\" filed" << std::endl;
         goto pass_oplog;
       }
       if (type.at(0) == 'c') {
@@ -646,13 +658,6 @@ retry:
           goto pass_oplog;
         }
       }
-      // To be deleted in ProcessSingleOplog(...)
-      args->db = opt_.db;
-      args->coll = opt_.coll;
-      args->dst_db = dst_db;
-      args->dst_coll = dst_coll;
-      args->oplog = oplog;
-      args->op = op;
 
       // Get oplog id to hash
       if (type.at(0) == 'u') {
@@ -664,22 +669,34 @@ retry:
         mongo::BSONElement e;
         if (id_obj.getObjectID(e)) {
           oplog_id = e.__oid().toString();
-          hash_id = static_cast<char>(oplog_id.at(oplog_id.size() - 1)) % OPLOG_APPLY_THREADNUM;
+          if (oplog_id.empty()) {
+            goto pass_oplog;
+          }
+          hash_id = static_cast<char>(oplog_id[oplog_id.size() - 1]) % OPLOG_APPLY_THREADNUM;
         }
-      }
-      while (*(oplog_bg_thread_group_[hash_id]->record_count_p()) > 5120) {
-        LOG(INFO) << "Too many oplog waiting for apply, sleep 1" << std::endl;
-        sleep(1);
-      }
 
-      oplog_bg_thread_group_[hash_id]->AddWriteUnit(args, MongoSync::ProcessSingleOplog);
-      memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));
+        args = new util::OplogArgs();
+        args->db = opt_.db;
+        args->coll = opt_.coll;
+        args->dst_db = dst_db;
+        args->dst_coll = dst_coll;
+        args->oplog = oplog.copy();
+        args->op = op;
+        args->promot = MONGOSYNC_PROMPT;
+        oplog_bg_thread_group_[hash_id]->AddWriteUnit(args, MongoSync::ProcessSingleOplog);
+        memcpy(&cur_times, oplog["ts"].value(), 2*sizeof(int32_t));
+      }
 
 pass_oplog:
       time(&cur);
       if (cur > pre && !cur_times.empty() && before(pre_times, cur_times)) {
         pre = cur;
         if (cur - cur_times.sec < 20) {
+          shards_num--;
+          if (shards_num < 0)
+            shards_num = 0;
+        }
+        if (shards_num == 0) {
           LOG(INFO) << MONGOSYNC_PROMPT << "Syncronization almost done" << std::endl;
         }
         pre_times = cur_times;
@@ -838,10 +855,9 @@ void *MongoSync::ProcessSingleOplog(void *pargs) {
   std::string coll = args->coll;
   std::string dst_db = args->dst_db;
   std::string dst_coll = args->dst_coll;
-  mongo::BSONObj oplog = args->oplog;
+  mongo::BSONObj oplog = args->oplog.copy();
   int op = args->op;
 	mongo::DBClientConnection* dst_conn = args->dst_conn;
-  delete args;
 
 	std::string oplog_ns = oplog.getStringField("ns");	
 

@@ -3,6 +3,7 @@
 
 #include <iostream>
 
+int shards_num = 1;
 void *mongo_to_mongos(void *args) {
   MongoSync *mongosync = reinterpret_cast<MongoSync *>(args);
   mongosync->Process();
@@ -71,6 +72,7 @@ int main(int argc, char *argv[]) {
     Options shard_opt(opt);
     shard_opt.src_user = opt.shard_user;
     shard_opt.src_passwd = opt.shard_passwd;
+    shards_num = shards.size();
     for (int i = 0; i < shards.size(); i++) {
       size_t slash_pos = shards[i].find('/');
       std::string shard_addr = shards[i].substr(slash_pos + 1);
