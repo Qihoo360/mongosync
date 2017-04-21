@@ -360,17 +360,28 @@ MongoSync* MongoSync::NewMongoSync(const Options *opt) {
 	return mongosync;
 }
 
-bool MongoSync::IsMasterMongo() {
+bool MongoSync::GetReadableHost(std::string* readable_host) {
   mongo::BSONObj tmp;
-  if (!src_conn_->runCommand("db", BSON("isMaster" << 1), tmp, mongo::QueryOption_SlaveOk)) {
-    LOG(FATAL) << "runCommand db.isMaster()" << std::endl;
-    return true;
+  if (!src_conn_->runCommand("admin", BSON("replSetGetStatus" << 1), tmp, mongo::QueryOption_SlaveOk)) {
+    LOG(FATAL) << "runCommand  falied replSetGetStatus" << std::endl;
+    return false;
   }
-  if (!tmp.getBoolField("secondary")) {
-    LOG(INFO) << opt_.src_ip_port << " is MASTER" << std::endl;
-    return true; 
+  if (!tmp.hasField("members")) {
+    return false;
   }
-  return false;
+  mongo::BSONObj members = tmp.getObjectField("members");
+  for (int i = 0; i < members.nFields(); i++) {
+    mongo::BSONObj member = members[i].Obj();
+    std::string info = member.getStringField("stateStr");
+    if (info == "SECONDARY") {
+      readable_host->assign(member.getStringField("name"));
+      return true;
+    } else if (info == "PRIMARY") {
+      readable_host->assign(member.getStringField("name"));
+    }
+  }
+
+  return true;
 }
 
 mongo::DBClientConnection* MongoSync::ConnectAndAuth(const std::string &srv_ip_port,

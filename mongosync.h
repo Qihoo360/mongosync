@@ -159,7 +159,7 @@ public:
 	MongoSync(const Options *opt);
 	~MongoSync();
 	int32_t InitConn();
-  bool IsMasterMongo();
+  bool GetReadableHost(std::string* readable_host);
 
   // Used when sourse is mongos
   std::vector<std::string> GetShards();

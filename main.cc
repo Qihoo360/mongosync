@@ -69,21 +69,23 @@ int main(int argc, char *argv[]) {
     shard_opt.src_passwd = opt.shard_passwd;
     for (int i = 0; i < shards.size(); i++) {
       size_t slash_pos = shards[i].find('/');
-      std::string shard_addr = shards[i].substr(slash_pos + 1);
-      util::Split(shard_addr, ',', shard_ips);
+      size_t comma_pos = shards[i].find(',');
+      std::string shard_addr =
+        shards[i].substr(slash_pos + 1, comma_pos - slash_pos -1);
 
       // find a SECONDARY src mongodb
       MongoSync *mongosync = NULL;
-      int j = 0;
-      for (j = 0; j < shard_ips.size(); j++) {
-        shard_opt.src_ip_port = shard_ips[j];
-        mongosync = MongoSync::NewMongoSync(&shard_opt); // delete in thread
-        if (mongosync && !mongosync->IsMasterMongo())
-          break;
-        else if (mongosync && j == shard_ips.size() - 1)
-          break;
-        else
-          delete mongosync;
+      shard_opt.src_ip_port = shard_addr;
+      mongosync = MongoSync::NewMongoSync(&shard_opt);
+      std::string readable_host = shard_addr;
+      if (!mongosync || !mongosync->GetReadableHost(&readable_host)) {
+        LOG(FATAL) << "Create shard mongosync instance failed" << std::endl;
+        return -1;
+      }
+      if (readable_host != shard_addr) {
+        delete mongosync;
+        shard_opt.src_ip_port = readable_host;
+        mongosync = MongoSync::NewMongoSync(&shard_opt);
       }
       if (!mongosync) {
         LOG(FATAL) << "Create shard mongosync instance failed" << std::endl;
