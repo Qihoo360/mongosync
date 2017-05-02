@@ -167,6 +167,10 @@ public:
   bool IsBigChunkExist();
   bool IsBalancerRunning();
 
+  void MongosGetOplogOption();
+  void MongosCloneDb();
+  void MongosSyncOplog();
+
 	void Process();
 	void CloneOplog();
 	void CloneAllDb();

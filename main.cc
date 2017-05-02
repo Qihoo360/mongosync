@@ -4,9 +4,9 @@
 #include <iostream>
 
 int shards_num = 1;
-void *mongo_to_mongos(void *args) {
+void *sync_oplog_thread(void *args) {
   MongoSync *mongosync = reinterpret_cast<MongoSync *>(args);
-  mongosync->Process();
+  mongosync->MongosSyncOplog();
 
   delete mongosync;
   pthread_exit(NULL);
@@ -48,27 +48,28 @@ int main(int argc, char *argv[]) {
       return -1;
     }
     // Get mongos shards host info
-    MongoSync *mongosync = MongoSync::NewMongoSync(&opt);
-    if (!mongosync) {
+    MongoSync *mongos_mongosync = MongoSync::NewMongoSync(&opt);
+    if (!mongos_mongosync) {
       LOG(FATAL) << "Create mongosync instance failed" << std::endl;
       return -1;
     }
-    std::vector<std::string> shards = mongosync->GetShards();
-    if (mongosync->IsBalancerRunning()) {
+    std::vector<std::string> shards = mongos_mongosync->GetShards();
+    if (mongos_mongosync->IsBalancerRunning()) {
       LOG(FATAL) << "Balancer is running" << std::endl;
       return -1;
     }
-    if (mongosync->IsBigChunkExist()) {
+    if (mongos_mongosync->IsBigChunkExist()) {
       LOG(FATAL) << "Big chunk exist" << std::endl;
       return -1;
     }
-    delete mongosync;
 
+    sleep(5);
     // Create connection between shard and dst mongos
     int ret;
     pthread_t tid;
     std::vector<pthread_t> tids;
     std::vector<std::string> shard_ips;
+    std::vector<MongoSync*> shard_mongosync;
     Options shard_opt(opt);
     shard_opt.src_user = opt.shard_user;
     shard_opt.src_passwd = opt.shard_passwd;
@@ -94,7 +95,15 @@ int main(int argc, char *argv[]) {
         mongosync = MongoSync::NewMongoSync(&shard_opt);
       }
 
-      ret = pthread_create(&tid, NULL, mongo_to_mongos, (void *)mongosync);
+      mongosync->MongosGetOplogOption();
+      shard_mongosync.push_back(mongosync);
+    }
+
+    mongos_mongosync->MongosCloneDb();
+
+    for (int i = 0; i < shard_mongosync.size(); i++) {
+      MongoSync* mongosync = shard_mongosync[i];
+      ret = pthread_create(&tid, NULL, sync_oplog_thread, (void *)mongosync);
       if (ret != 0)
         return -1;
       tids.push_back(tid);

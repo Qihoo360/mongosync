@@ -492,6 +492,36 @@ bool MongoSync::IsBalancerRunning() {
   return true;
 }
 
+void MongoSync::MongosGetOplogOption() {
+  if (need_sync_oplog()) {
+    oplog_begin_ = opt_.oplog_start;
+    if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
+      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
+    } else if (opt_.oplog_start.empty()) {
+      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
+    }
+    oplog_finish_ = opt_.oplog_end;
+  }
+}
+
+void MongoSync::MongosCloneDb() {
+	if (need_clone_all_db()) {
+		CloneAllDb();	
+	} else if (need_clone_db()) {
+		CloneDb();
+	} else if (need_clone_coll()) {
+		std::string sns = opt_.db + "." + opt_.coll;
+		std::string dns = (opt_.dst_db.empty() ? opt_.db : opt_.dst_db) + "." + (opt_.dst_coll.empty() ? opt_.coll : opt_.dst_coll);
+		CloneColl(sns, dns, opt_.batch_size);
+	}
+}
+
+void MongoSync::MongosSyncOplog() {
+	if (need_sync_oplog()) {
+		SyncOplog();
+	}
+}
+
 void MongoSync::Process() {
   if (need_sync_oplog()) {
     oplog_begin_ = opt_.oplog_start;
@@ -600,7 +630,7 @@ retry:
                                     mongo::QueryOption_SlaveOk);
           continue;
         }
-        if (*reinterpret_cast<uint64_t*>(&oplog_finish_) != static_cast<uint64_t>(-1LL)) {
+        if (oplog_finish_.no != 2147483647 && oplog_finish_.sec != 2147483647) {
           if (!cur_times.empty() && before(pre_times, cur_times)) {
             LOG(INFO) << util::GetFormatTime() << MONGOSYNC_PROMPT << "synced up to " << cur_times.sec << "," << cur_times.no << " (" << util::GetFormatTime(cur_times.sec) << ")" << std::endl;
           }
