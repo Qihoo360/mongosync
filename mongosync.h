@@ -47,16 +47,17 @@ struct OplogTime {
 struct Options {
 	Options()
     : src_auth_db("admin"),
-		src_use_mcr(false),
-	  dst_auth_db("admin"),		
-		dst_use_mcr(false),
-		oplog(false),
-    raw_oplog(false),
-    dst_oplog_ns("sync.oplog"),
-    no_index(false),
-    bg_num(10),
-		batch_size(16*1024*1024) {
-   }
+		  src_use_mcr(false),
+      is_mongos(false),
+	    dst_auth_db("admin"),		
+		  dst_use_mcr(false),
+		  oplog(false),
+      raw_oplog(false),
+      dst_oplog_ns("sync.oplog"),
+      no_index(false),
+      bg_num(10),
+		  batch_size(16*1024*1024) {
+  }
 
 	std::string src_ip_port;
 	std::string src_user;
