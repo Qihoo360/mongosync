@@ -17,7 +17,7 @@ enum OplogProcessOp {
 
 struct OplogTime {
 	bool empty() { //mark whether to be initialized
-		return sec == -1 && no == -1;
+		return sec == 2147483647 && no == 2147483647;
 	}
 
 	mongo::Timestamp_t timestamp() {
@@ -35,7 +35,7 @@ struct OplogTime {
     return *this;
 	}
 
-	OplogTime(int32_t _sec = -1, int32_t _no = -1)
+	OplogTime(int32_t _sec = 2147483647, int32_t _no = 2147483647)
 		: no(_no), 
 		sec(_sec) {
 	}
