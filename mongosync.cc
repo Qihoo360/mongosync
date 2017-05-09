@@ -756,7 +756,7 @@ pass_oplog:
   }
 }
 
-void MongoSync::CloneAllDb() {
+void MongoSync::GetAllDb(std::vector<std::string>* all_dbs) {
 	mongo::Query q = BSON("listDatabases" << 1);
 	mongo::BSONObj obj = src_conn_->findOne("admin.$cmd", q, NULL, mongo::QueryOption_SlaveOk).getObjectField("databases").getOwned();
 	std::set<std::string> fields;
@@ -770,8 +770,16 @@ void MongoSync::CloneAllDb() {
         db == "config") {
 			continue;
 		}
-		CloneDb(db);
+    all_dbs->push_back(db);
 	}
+}
+
+void MongoSync::CloneAllDb() {
+  std::vector<std::string> all_dbs;
+  GetAllDb(&all_dbs);
+  for (int i = 0; i < all_dbs.size(); i++) {
+    CloneDb(all_dbs[i]);
+  }
 }
 
 void MongoSync::CloneDb(std::string db) {

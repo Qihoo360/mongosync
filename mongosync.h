@@ -171,6 +171,7 @@ public:
   void MongosGetOplogOption();
   void MongosCloneDb();
   void MongosSyncOplog();
+  void GetAllDb(std::vector<std::string>* all_dbs);
 
 	void Process();
 	void CloneOplog();

@@ -12,6 +12,16 @@ void *sync_oplog_thread(void *args) {
   pthread_exit(NULL);
 }
 
+int cloning_thread = 0;
+void *clone_db_thread(void *args) {
+  MongoSync *mongosync = reinterpret_cast<MongoSync *>(args);
+  mongosync->MongosCloneDb();
+
+  delete mongosync;
+  cloning_thread--;
+  pthread_exit(NULL);
+}
+
 int main(int argc, char *argv[]) {
 	/*
 	 *  first set default log level to INFO
@@ -41,6 +51,7 @@ int main(int argc, char *argv[]) {
 
   // mongos -> mongos
   if (opt.is_mongos) {
+    std::vector<std::string> all_dbs;
     if (opt.shard_user.empty() || opt.shard_passwd.empty()) {
       LOG(FATAL)
         << "Shard username or password should not be empty when src is mongos\n"
@@ -63,7 +74,9 @@ int main(int argc, char *argv[]) {
       return -1;
     }
 
-    sleep(5);
+    mongos_mongosync->GetAllDb(&all_dbs);
+    delete mongos_mongosync;
+
     // Create connection between shard and dst mongos
     int ret;
     pthread_t tid;
@@ -99,13 +112,33 @@ int main(int argc, char *argv[]) {
       shard_mongosync.push_back(mongosync);
     }
 
-    mongos_mongosync->MongosCloneDb();
+    for (int i = 0; i < all_dbs.size(); i++) {
+      Options subopt(opt);
+      subopt.db = all_dbs[i];
+      cloning_thread++;
+      mongos_mongosync = MongoSync::NewMongoSync(&subopt);
+      ret = pthread_create(&tid, NULL, clone_db_thread, (void *)mongos_mongosync);
+      if (ret != 0)
+        return -1;
+      LOG(INFO) << "New thread cloning db: " << all_dbs[i] << std::endl;
+      pthread_setname_np(tid, "clone_db_thread");
+      tids.push_back(tid);
+      while(cloning_thread > 10) {
+        sleep(1);
+      }
+    }
 
+    for (int i = 0; i < tids.size(); i++) {
+      pthread_join(tids[i], NULL);
+    }
+
+    tids.clear();
     for (int i = 0; i < shard_mongosync.size(); i++) {
       MongoSync* mongosync = shard_mongosync[i];
       ret = pthread_create(&tid, NULL, sync_oplog_thread, (void *)mongosync);
       if (ret != 0)
         return -1;
+      pthread_setname_np(tid, "sync_oplog_thread");
       tids.push_back(tid);
     }
 
