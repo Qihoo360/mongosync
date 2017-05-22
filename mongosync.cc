@@ -533,7 +533,9 @@ void MongoSync::Process() {
     oplog_finish_ = opt_.oplog_end;
   }
 
-	if (need_clone_oplog()) {
+  if (need_clone_oplog()) {
+    oplog_begin_ = OplogTime(-1, -1);
+    oplog_finish_ = OplogTime(-1, -1);
 		CloneOplog();
 		return;
 	}
@@ -581,15 +583,16 @@ retry:
                                                                  mongo::QueryOption_SlaveOk);
 
   try {
-    query = mongo::Query(BSON("$or" << BSON_ARRAY(BSON("ns" << BSON("$regex" << ("^"+opt_.db))) << BSON("ns" << "admin.$cmd")) << "ts" << oplog_begin_.timestamp()));
+    query = mongo::Query(BSON("ts" << oplog_begin_.timestamp()));
     mongo::BSONObj obj = src_conn_->findOne(oplog_ns_, query, NULL, mongo::QueryOption_SlaveOk);
     if (obj.isEmpty()) {
       LOG(FATAL) << "Can not find oplog at" << oplog_begin_.sec << ","
-        << oplog_begin_.no << std::endl;
-      // return;
+        << oplog_begin_.no << " " << query.toString() << std::endl;
+      exit(-1);
     }
   } catch (mongo::DBException& e) {
     LOG(FATAL) << "find oplog DBException: " << e.toString() << std::endl;
+    exit(-1);
   }
 
 	std::string dst_db, dst_coll;
@@ -617,12 +620,12 @@ retry:
           sleep(1);
           mongo::BSONObj error;
           if (cursor->peekError(&error)) {
-            LOG(FATAL) << MONGOSYNC_PROMPT << error.toString() << std::endl;
+            LOG(WARN) << MONGOSYNC_PROMPT << error.toString() << std::endl;
           } else {
-            LOG(FATAL) << MONGOSYNC_PROMPT << "no cursor error" << std::endl;
+            LOG(WARN) << MONGOSYNC_PROMPT << "no cursor error" << std::endl;
           }
           cursor_dead = true;
-          LOG(FATAL) << MONGOSYNC_PROMPT << "cursor is dead, try rebuild" << std::endl;
+          LOG(WARN) << MONGOSYNC_PROMPT << "cursor is dead, try rebuild" << std::endl;
           cursor = src_conn_->query(oplog_ns_, query, 0, 0, NULL,
                                     mongo::QueryOption_CursorTailable |
                                     mongo::QueryOption_AwaitData |

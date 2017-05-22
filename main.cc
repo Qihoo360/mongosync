@@ -115,6 +115,9 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < all_dbs.size(); i++) {
       Options subopt(opt);
       subopt.db = all_dbs[i];
+      if (!opt.db.empty() && subopt.db != opt.db) {
+        continue;
+      }
       cloning_thread++;
       mongos_mongosync = MongoSync::NewMongoSync(&subopt);
       ret = pthread_create(&tid, NULL, clone_db_thread, (void *)mongos_mongosync);
