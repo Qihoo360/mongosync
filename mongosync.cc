@@ -493,15 +493,13 @@ bool MongoSync::IsBalancerRunning() {
 }
 
 void MongoSync::MongosGetOplogOption() {
-  if (need_sync_oplog()) {
-    oplog_begin_ = opt_.oplog_start;
-    if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
-      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
-    } else if (opt_.oplog_start.empty()) {
-      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
-    }
-    oplog_finish_ = opt_.oplog_end;
+  oplog_begin_ = opt_.oplog_start;
+  if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
+    oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
+  } else if (opt_.oplog_start.empty()) {
+    oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
   }
+  oplog_finish_ = opt_.oplog_end;
 }
 
 void MongoSync::MongosCloneDb() {
@@ -523,19 +521,15 @@ void MongoSync::MongosSyncOplog() {
 }
 
 void MongoSync::Process() {
-  if (need_sync_oplog()) {
-    oplog_begin_ = opt_.oplog_start;
-    if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
-      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
-    } else if (opt_.oplog_start.empty()) {
-      oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
-    }
-    oplog_finish_ = opt_.oplog_end;
+  oplog_begin_ = opt_.oplog_start;
+  if ((need_clone_all_db() || need_clone_db() || need_clone_coll()) && opt_.oplog_start.empty()) {
+    oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, "", "", false);
+  } else if (opt_.oplog_start.empty()) {
+    oplog_begin_ = GetSideOplogTime(src_conn_, oplog_ns_, opt_.db, opt_.coll, true);
   }
+  oplog_finish_ = opt_.oplog_end;
 
   if (need_clone_oplog()) {
-    oplog_begin_ = OplogTime(-1, -1);
-    oplog_finish_ = OplogTime(-1, -1);
 		CloneOplog();
 		return;
 	}
